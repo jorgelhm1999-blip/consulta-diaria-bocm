@@ -1,12 +1,39 @@
-{
-  "name": "consulta-diaria-bocm",
-  "version": "0.16.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "cheerio": "^1.0.0"
-  },
-  "engines": {
-    "node": ">=18"
-  }
-}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consulta Diaria BOCM</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="test-marker" aria-label="Marca de comprobación">AAAAAAAA</div>
+      <div class="brand-wrap">
+        <img class="brand-image" src="assets/cabecera-bocm.png" alt="Consulta Diaria BOCM">
+        <img class="brand-logo" src="assets/logo-buscador-bocm.png" alt="Buscador de noticias BOCM">
+      </div>
+      <p class="subtitle">Selección diaria de publicaciones útiles sobre urbanismo, medio ambiente territorial e ingeniería civil.</p>
+      <span class="version">v17</span>
+    </header>
+
+    <section class="search-panel" aria-label="Consulta diaria">
+      <div class="field date-field">
+        <label for="date">Fecha del boletín</label>
+        <input id="date" type="date" required>
+      </div>
+      <div class="field municipality-field">
+        <label for="municipality">Municipio <span>opcional</span></label>
+        <input id="municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
+      </div>
+      <button id="search" type="button">Consultar BOCM</button>
+    </section>
+
+    <datalist id="municipality-list"></datalist>
+    <section id="status" class="status" aria-live="polite"></section>
+    <section id="results" class="results" aria-label="Resultados"></section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
