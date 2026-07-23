@@ -14,3 +14,18 @@ Aplicación web para Vercel que consulta el sumario diario del BOCM y muestra ú
 - Se excluye Metro de Madrid.
 - Se preserva “zona de policía”, pero se excluyen plazas y procesos de Policía Local o fuerzas de seguridad.
 - Solo se consultan y enlazan páginas HTML.
+
+
+## Cambios v5
+
+- Inclusión transversal de anuncios relativos a expropiaciones, expedientes expropiatorios, actas previas, justiprecios y bienes o derechos afectados.
+- Inclusión de subvenciones, ayudas, convenios y adendas vinculados a urbanismo u obra civil.
+- Ampliación de términos de rehabilitación, regeneración, renovación urbana y mejora del entorno físico.
+- Normalización de palabras partidas por guion y salto de línea.
+
+
+## Versión 6 · Descripciones automáticas
+
+La aplicación limpia la navegación y los metadatos de las páginas HTML del BOCM y genera una descripción administrativa breve sin utilizar servicios de inteligencia artificial externos. Para ello detecta la actuación principal, su fase de tramitación, el municipio y las materias técnicas relevantes.
+
+La etiqueta **v6** aparece junto al título de la aplicación para comprobar visualmente que el último despliegue está activo.

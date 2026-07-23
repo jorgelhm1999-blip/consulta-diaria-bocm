@@ -27,7 +27,7 @@ function renderCard(item) {
       <h2>${escapeHtml(item.title)}</h2>
       <p class="municipality">${escapeHtml(item.municipality)}</p>
       <p class="reason">${escapeHtml(item.reason || '')}</p>
-      <p class="summary">${escapeHtml(item.summary)}${item.summary.length >= 420 ? '…' : ''}</p>
+      <p class="summary">${escapeHtml(item.summary)}</p>
       <div class="actions">
         <a href="${item.url}" target="_blank" rel="noopener">Abrir anuncio en HTML</a>
       </div>

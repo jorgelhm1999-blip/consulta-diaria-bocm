@@ -46,3 +46,6 @@ h2 { margin: 0; font-size: 1.18rem; line-height: 1.35; }
 .municipality-field { position: relative; }
 
 .reason { margin: -0.25rem 0 0.75rem; font-weight: 700; color: #36536b; }
+
+.version { display: inline-block; vertical-align: top; margin-left: .35rem; padding: .28rem .48rem; border-radius: 999px; background: #eef1f6; color: #68748a; font-size: .72rem; letter-spacing: 0; }
+.summary { white-space: normal; }

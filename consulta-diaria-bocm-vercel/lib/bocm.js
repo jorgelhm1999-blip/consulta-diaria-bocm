@@ -100,7 +100,7 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.5',
+        'User-Agent': 'ConsultaDiariaBOCM/0.6',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -289,27 +289,179 @@ function classifyAnnouncement({ text, context, section }) {
   return null;
 }
 
+const BOILERPLATE_PATTERNS = [
+  /pasar al contenido principal/i,
+  /toggle navigation/i,
+  /último bocm/i,
+  /autentificación y verificación/i,
+  /qué es el bocm/i,
+  /publicar un anuncio/i,
+  /transparencia/i,
+  /código de verificación electrónica/i,
+  /pdf de la disposición/i,
+  /xml de la disposición/i,
+  /json-ld de la disposición/i,
+  /boletín oficial de la comunidad de madrid/i,
+  /fecha del boletín/i,
+  /núm\.?\s*\d+/i,
+  /páginas?:?\s*\d+/i
+];
+
+function tidyText(value = '') {
+  return value
+    .replace(/([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])-\s*\n?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, '$1$2')
+    .replace(/\u00ad/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isBoilerplate(text = '') {
+  const value = tidyText(text);
+  if (!value || value.length < 25) return true;
+  return BOILERPLATE_PATTERNS.some(pattern => pattern.test(value));
+}
+
+function extractUsefulContent($) {
+  $('script, style, noscript, nav, header, footer, form, button, svg, aside').remove();
+  $('[role="navigation"], .navbar, .nav, .breadcrumb, .footer, .header, .menu, .toolbar').remove();
+
+  const roots = $('main article, main .field--name-body, article, .field--name-body, main').toArray();
+  const root = roots.length ? $(roots[0]) : $('body');
+  const chunks = [];
+
+  root.find('p, li, td, th, h2, h3, h4').each((_, element) => {
+    const text = tidyText($(element).text());
+    if (!isBoilerplate(text)) chunks.push(text);
+  });
+
+  if (!chunks.length) {
+    const fallback = tidyText(root.text());
+    if (fallback) chunks.push(fallback);
+  }
+
+  return [...new Set(chunks)].join('\n');
+}
+
+function splitSentences(text = '') {
+  return tidyText(text)
+    .split(/(?<=[.!?;:])\s+(?=[A-ZÁÉÍÓÚÜÑ0-9])/)
+    .map(tidyText)
+    .filter(sentence => sentence.length >= 35 && sentence.length <= 900 && !isBoilerplate(sentence));
+}
+
+function clipSentence(text, max = 260) {
+  const value = tidyText(text).replace(/^[–—-]\s*/, '');
+  if (value.length <= max) return value.replace(/[;,:]$/, '') + (/[.!?]$/.test(value) ? '' : '.');
+  const clipped = value.slice(0, max);
+  const cut = clipped.lastIndexOf(' ');
+  return `${clipped.slice(0, cut > 120 ? cut : max).replace(/[;,:.]$/, '')}…`;
+}
+
+function detectAction(text = '') {
+  const value = normalize(text);
+  const actions = [
+    ['se somete a informacion publica', 'Se somete a información pública'],
+    ['informacion publica', 'Se somete a información pública'],
+    ['aprobacion definitiva', 'Se publica la aprobación definitiva'],
+    ['aprobado definitivamente', 'Se publica la aprobación definitiva'],
+    ['aprobacion inicial', 'Se publica la aprobación inicial'],
+    ['aprobado inicialmente', 'Se publica la aprobación inicial'],
+    ['convocatoria de licitacion', 'Se anuncia una licitación'],
+    ['anuncio de licitacion', 'Se anuncia una licitación'],
+    ['procedimiento abierto', 'Se anuncia un procedimiento de contratación'],
+    ['concesion directa de una subvencion', 'Se publica la concesión directa de una subvención'],
+    ['concesion directa', 'Se publica una concesión directa'],
+    ['subvencion', 'Se publica una subvención'],
+    ['adenda', 'Se publica una adenda'],
+    ['convenio', 'Se publica un convenio'],
+    ['actas previas a la ocupacion', 'Se convoca el levantamiento de actas previas a la ocupación'],
+    ['ocupacion urgente', 'Se tramita la ocupación urgente de los bienes afectados'],
+    ['expropiacion forzosa', 'Se publica una actuación de expropiación forzosa'],
+    ['expediente expropiatorio', 'Se publica un expediente expropiatorio'],
+    ['ley ', 'Se publica una ley']
+  ];
+  return actions.find(([needle]) => value.includes(needle))?.[1] || '';
+}
+
+function scoreSentence(sentence, relevance) {
+  const value = normalize(sentence);
+  let score = 0;
+  const weighted = [
+    ['objeto', 5], ['actuacion', 4], ['urbanizacion', 7], ['reurbanizacion', 7],
+    ['rehabilitacion', 6], ['planeamiento', 6], ['plan especial', 7], ['plan parcial', 7],
+    ['estudio de detalle', 7], ['proyecto de urbanizacion', 8], ['expropiacion', 8],
+    ['subvencion', 6], ['convenio', 5], ['adenda', 5], ['licitacion', 7],
+    ['informacion publica', 6], ['aprobacion', 5], ['municipio', 3], ['termino municipal', 4],
+    ['carretera', 5], ['saneamiento', 5], ['abastecimiento', 5], ['infraestructura', 4]
+  ];
+  for (const [term, weight] of weighted) if (value.includes(term)) score += weight;
+  for (const match of relevance.matches || []) if (value.includes(normalize(match))) score += 4;
+  if (sentence.length >= 70 && sentence.length <= 420) score += 3;
+  if (/^(se |el ayuntamiento|la consejeria|la presente|mediante|por resolucion)/i.test(sentence)) score += 2;
+  if (BOILERPLATE_PATTERNS.some(pattern => pattern.test(sentence))) score -= 30;
+  return score;
+}
+
+function buildAdministrativeSummary({ title, body, municipality, relevance }) {
+  const sentences = splitSentences(body)
+    .map(sentence => ({ sentence, score: scoreSentence(sentence, relevance) }))
+    .sort((a, b) => b.score - a.score || a.sentence.length - b.sentence.length);
+
+  const action = detectAction(`${title} ${body}`);
+  const selected = [];
+  for (const candidate of sentences) {
+    if (candidate.score < 3) continue;
+    const normalizedCandidate = normalize(candidate.sentence);
+    if (selected.some(item => normalize(item).includes(normalizedCandidate) || normalizedCandidate.includes(normalize(item)))) continue;
+    selected.push(candidate.sentence);
+    if (selected.length === 2) break;
+  }
+
+  const location = municipality && municipality !== 'Ámbito autonómico o no identificado'
+    ? ` en ${municipality}`
+    : '';
+
+  if (selected.length) {
+    const lead = action ? `${action}${location}.` : '';
+    const details = selected.map(sentence => clipSentence(sentence, 300)).join(' ');
+    return tidyText(`${lead} ${details}`).slice(0, 640);
+  }
+
+  const titleSummary = clipSentence(title, 430);
+  return action
+    ? tidyText(`${action}${location}. ${titleSummary}`).slice(0, 640)
+    : titleSummary.slice(0, 640);
+}
+
 async function readAnnouncement(item) {
   let title = item.label;
-  let body = '';
 
   const html = await fetchText(item.href, { headers: { Accept: 'text/html,application/xhtml+xml' } });
   if (!html) return null;
 
   const $ = cheerio.load(html);
-  title = $('h1').first().text().trim() || $('h2').first().text().trim() || $('title').text().trim() || title;
-  body = $('main').text().trim() || $('article').text().trim() || $('body').text().trim();
+  title = $('meta[property="og:title"]').attr('content')?.trim()
+    || $('main h1').first().text().trim()
+    || $('article h1').first().text().trim()
+    || $('h1').first().text().trim()
+    || $('h2').first().text().trim()
+    || $('title').text().trim()
+    || title;
+
+  const body = extractUsefulContent($);
   if (!body) return null;
 
   const combined = `${title} ${body}`;
   const relevance = classifyAnnouncement({ text: combined, context: item.context, section: item.section });
   if (!relevance) return null;
 
-  const municipality = extractMunicipality(`${item.context} ${combined}`);
+  const municipality = extractMunicipality(`${item.context} ${combined}`) || 'Ámbito autonómico o no identificado';
+  const summary = buildAdministrativeSummary({ title, body, municipality, relevance });
+
   return {
     title: title || 'Anuncio del BOCM',
-    municipality: municipality || 'Ámbito autonómico o no identificado',
-    summary: body.replace(/\s+/g, ' ').trim().slice(0, 420),
+    municipality,
+    summary,
     url: item.href,
     score: relevance.score,
     reason: relevance.reason,
