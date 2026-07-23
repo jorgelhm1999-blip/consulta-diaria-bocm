@@ -1,12 +1,39 @@
-# Consulta Diaria BOCM · v18
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consulta Diaria BOCM</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="test-marker" aria-label="Marca de comprobación">AAAAAAAA</div>
+      <div class="brand-wrap">
+        <img class="brand-image" src="assets/cabecera-bocm.png" alt="Consulta Diaria BOCM">
+        <img class="brand-logo" src="assets/logo-buscador-bocm.png" alt="Buscador de noticias BOCM">
+      </div>
+      <p class="subtitle">Selección diaria de publicaciones útiles sobre urbanismo, medio ambiente territorial e ingeniería civil.</p>
+      <span class="version">v19</span>
+    </header>
 
-La consulta se realiza en dos fases para evitar tiempos de espera excesivos en Vercel:
+    <section class="search-panel" aria-label="Consulta diaria">
+      <div class="field date-field">
+        <label for="date">Fecha del boletín</label>
+        <input id="date" type="date" required>
+      </div>
+      <div class="field municipality-field">
+        <label for="municipality">Municipio <span>opcional</span></label>
+        <input id="municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
+      </div>
+      <button id="search" type="button">Consultar BOCM</button>
+    </section>
 
-1. Se lee el sumario y se seleccionan únicamente los anuncios candidatos según sección, organismo, epígrafe y palabras clave.
-2. Solo se abren los HTML candidatos para comprobar el contenido, aplicar exclusiones y generar la descripción breve.
-
-La regla «Programa Regional de Inversiones» es una vía adicional de inclusión y no un requisito para el resto de anuncios de la sección D).
-
-## Actualización
-
-Sustituir `lib/bocm.js`, `index.html`, `package.json` y `README.md`.
+    <datalist id="municipality-list"></datalist>
+    <section id="status" class="status" aria-live="polite"></section>
+    <section id="results" class="results" aria-label="Resultados"></section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
