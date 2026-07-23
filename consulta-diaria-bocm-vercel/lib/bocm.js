@@ -236,39 +236,57 @@ async function collectAnnouncementLinks(bulletin) {
   $('a[href]').each((_, el) => {
     const href = absoluteUrl($(el).attr('href'), bulletin.url);
     if (!href || !href.includes('/boletin-completo/')) return;
-    const label = $(el).text().trim();
+    const label = $(el).text().replace(/\s+/g, ' ').trim();
     const context = `${label} ${href}`;
     if (inferSection(context) === 'B') return;
     sectionLinks.push({ href, label });
   });
 
-  const pages = [{ href: bulletin.url, label: $('title').text().trim() }, ...uniqueBy(sectionLinks, x => x.href)];
+  // Si existen páginas separadas por sección, se usan esas páginas. Son mucho
+  // más precisas que la portada del boletín y evitan que el texto de un anuncio
+  // contamine a los anuncios vecinos.
+  const uniqueSections = uniqueBy(sectionLinks, x => x.href);
+  const pages = uniqueSections.length
+    ? uniqueSections
+    : [{ href: bulletin.url, label: $('title').text().trim() }];
   const announcementLinks = [];
 
   for (const pageInfo of pages) {
     const html = pageInfo.href === bulletin.url ? bulletin.html : await fetchText(pageInfo.href);
     if (!html) continue;
     const page = cheerio.load(html);
-    const pageTitle = page('h1').first().text().trim() || page('title').text().trim() || pageInfo.label;
+    const pageTitle = page('h1').first().text().replace(/\s+/g, ' ').trim()
+      || page('title').text().replace(/\s+/g, ' ').trim()
+      || pageInfo.label;
     const pageContext = `${pageInfo.label} ${pageTitle} ${pageInfo.href}`;
     const pageSection = inferSection(pageContext);
     if (pageSection === 'B') continue;
 
     page('a[href]').each((_, el) => {
       const href = absoluteUrl(page(el).attr('href'), pageInfo.href);
-      if (!href || !/BOCM-\d{8}-\d+/i.test(href)) return;
-      if (/\.(pdf|xml|epub|json)(?:$|\?)/i.test(href)) return;
+      if (!href || href === bulletin.url || href.includes('/boletin/')) return;
+
+      let pathname = '';
+      try { pathname = new URL(href).pathname; } catch { return; }
+      // Solo páginas HTML individuales de disposiciones. Se impide que el
+      // propio sumario BOCM nº 174 sea tratado como si fuese un anuncio.
+      if (!/^\/bocm-\d{8}-\d+\/?$/i.test(pathname)) return;
 
       const node = page(el);
-      const container = node.closest('article, li, tr, section, div');
-      const nearby = container.text().replace(/\s+/g, ' ').trim().slice(0, 1400);
-      const localSection = inferSection(`${pageContext} ${nearby} ${href}`);
+      // Evitamos closest('div'), que en la web del BOCM puede englobar media
+      // página y trasladar términos como PRI o Urbanismo a anuncios ajenos.
+      const container = node.closest('article, li, tr');
+      const localBlock = (container.length ? container.text() : node.parent().text())
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 1800);
+      const localSection = inferSection(`${pageContext} ${localBlock}`);
       if (localSection === 'B') return;
 
       announcementLinks.push({
         href,
-        label: node.text().trim(),
-        context: `${pageContext} ${nearby}`,
+        label: node.text().replace(/\s+/g, ' ').trim(),
+        context: `${pageContext} ${localBlock}`,
         section: localSection === 'OTHER' ? pageSection : localSection
       });
     });
@@ -277,39 +295,40 @@ async function collectAnnouncementLinks(bulletin) {
   return uniqueBy(announcementLinks, item => item.href);
 }
 
-
 function isSummaryCandidate(item) {
-  const value = normalize(`${item.context || ''} ${item.label || ''} ${item.href || ''}`);
+  const value = normalize(`${item.context || ''} ${item.label || ''}`);
   const section = item.section || inferSection(value);
 
   if (section === 'B' || value.includes('autoridades y personal')) return false;
   if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return false;
 
-  // Administración Local: solo se abre el anuncio cuando el propio bloque del
-  // sumario contiene a la vez Ayuntamiento y el epígrafe Urbanismo.
+  // Administración Local: regla cerrada. Solo Ayuntamiento + URBANISMO en el
+  // bloque propio del anuncio. Personal, empleo, hacienda, etc. no se abren.
   if (section === 'LOCAL' || value.includes('iii. administracion local') || value.includes('ayuntamiento de')) {
-    return value.includes('ayuntamiento de') && /(?:^|\s)urbanismo(?:\s|$|[.:;-])/.test(value);
+    return value.includes('ayuntamiento de')
+      && /(?:^|\s)urbanismo(?:\s|$|[.:;-])/.test(value);
   }
 
-  // A) Disposiciones Generales: leyes nuevas o disposiciones que las aprueban,
-  // modifican o derogan.
+  // A) Se abren las disposiciones con señales de ley para verificarlas en su
+  // HTML individual.
   if (section === 'A') {
     return isLaw(value) || isLawApprovalAmendmentOrRepeal(value);
   }
 
-  // C) Otras Disposiciones: consejería definida como de interés.
+  // C) Todo lo correspondiente a la consejería objetivo pasa a segunda fase.
   if (section === 'C') {
     return value.includes(normalize(TARGET_C_MINISTRY));
   }
 
-  // D) Anuncios: las dos consejerías objetivo entran como candidatas. Las
-  // consejerías expresamente excluidas se descartan antes de abrir su HTML.
-  if (section === 'D' || section === 'OTHER') {
+  // D) Las dos consejerías objetivo pasan a segunda fase. PRI es una vía
+  // adicional, jamás un requisito para el resto de anuncios de la sección.
+  if (section === 'D') {
     if (containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return false;
     if (containsAny(value, TARGET_D_MINISTRIES)) return true;
   }
 
-  // Reglas transversales que pueden aparecer fuera de las ramas anteriores.
+  // Reglas transversales basadas exclusivamente en el bloque propio del
+  // anuncio, no en el texto completo del sumario.
   if (containsAny(value, ALWAYS_INCLUDE_TERMS)) return true;
   if (containsAny(value, EXPROPRIATION_TERMS)) return true;
   if (containsAny(value, CONTRACT_MARKERS) && containsAny(value, CIVIL_ENGINEERING_TERMS)) return true;
