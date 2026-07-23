@@ -63,8 +63,7 @@ const FUNDING_AND_AGREEMENT_TERMS = [
 
 const ALWAYS_INCLUDE_TERMS = [
   'programa regional de inversiones',
-  'programa regional de inversion',
-  'pri'
+  'programa regional de inversion'
 ];
 
 const EXPROPRIATION_TERMS = [
@@ -113,8 +112,7 @@ const TERRITORIAL_ENVIRONMENT_TERMS = [
   'espacio protegido', 'via pecuaria', 'vias pecuarias',
   'monte', 'montes', 'cauce', 'dominio publico hidraulico',
   'residuos', 'suelo contaminado', 'contaminacion',
-  'infraestructura', 'obra', 'proyecto', 'planeamiento',
-  'urbanizacion', 'reurbanizacion', 'expropiacion'
+  'planeamiento', 'urbanizacion', 'reurbanizacion', 'expropiacion'
 ];
 
 const POLICE_PERSONNEL_TERMS = [
@@ -139,7 +137,7 @@ async function fetchText(url, options = {}) {
       ...fetchOptions,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/149 Safari/537.36 ConsultaDiariaBOCM/0.18',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/149 Safari/537.36 ConsultaDiariaBOCM/0.21',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(fetchOptions.headers || {})
@@ -229,6 +227,23 @@ function inferSection(context = '') {
   return 'OTHER';
 }
 
+
+function headingsBeforeLink(rawHtml, rawHref = '') {
+  if (!rawHref) return '';
+  const escapedHref = rawHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`href=["']${escapedHref}["']`, 'i').exec(rawHtml);
+  if (!match) return '';
+  const before = rawHtml.slice(Math.max(0, match.index - 6500), match.index);
+  const headings = [];
+  const regex = /<(h[1-6]|strong|b)[^>]*>([\s\S]*?)<\/\1>/gi;
+  let found;
+  while ((found = regex.exec(before))) {
+    const text = cheerio.load(`<div>${found[2]}</div>`)('div').text().replace(/\s+/g, ' ').trim();
+    if (text && text.length <= 180) headings.push(text);
+  }
+  return headings.slice(-10).join(' · ');
+}
+
 async function collectAnnouncementLinks(bulletin) {
   const $ = cheerio.load(bulletin.html);
   const sectionLinks = [];
@@ -273,20 +288,23 @@ async function collectAnnouncementLinks(bulletin) {
       if (!/^\/bocm-\d{8}-\d+\/?$/i.test(pathname)) return;
 
       const node = page(el);
-      // Evitamos closest('div'), que en la web del BOCM puede englobar media
-      // página y trasladar términos como PRI o Urbanismo a anuncios ajenos.
+      // El bloque local se limita al anuncio y se completa con los últimos
+      // encabezados anteriores al enlace. Así se conserva la consejería o el
+      // epígrafe municipal sin heredar texto de anuncios vecinos.
       const container = node.closest('article, li, tr');
       const localBlock = (container.length ? container.text() : node.parent().text())
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 1800);
-      const localSection = inferSection(`${pageContext} ${localBlock}`);
+      const rawHref = page(el).attr('href') || '';
+      const precedingHeadings = headingsBeforeLink(html, rawHref);
+      const localSection = inferSection(`${pageContext} ${precedingHeadings} ${localBlock}`);
       if (localSection === 'B') return;
 
       announcementLinks.push({
         href,
         label: node.text().replace(/\s+/g, ' ').trim(),
-        context: `${pageContext} ${localBlock}`,
+        context: `${pageContext} ${precedingHeadings} ${localBlock}`,
         section: localSection === 'OTHER' ? pageSection : localSection
       });
     });
@@ -299,38 +317,29 @@ function isSummaryCandidate(item) {
   const value = normalize(`${item.context || ''} ${item.label || ''}`);
   const section = item.section || inferSection(value);
 
+  // El sumario solo elimina ramas inequívocamente inútiles. La decisión final
+  // se toma siempre sobre el HTML individual del anuncio.
   if (section === 'B' || value.includes('autoridades y personal')) return false;
   if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return false;
 
-  // Administración Local: regla cerrada. Solo Ayuntamiento + URBANISMO en el
-  // bloque propio del anuncio. Personal, empleo, hacienda, etc. no se abren.
+  // Administración Local sí puede cribarse con seguridad por su epígrafe.
   if (section === 'LOCAL' || value.includes('iii. administracion local') || value.includes('ayuntamiento de')) {
     return value.includes('ayuntamiento de')
       && /(?:^|\s)urbanismo(?:\s|$|[.:;-])/.test(value);
   }
 
-  // A) Se abren las disposiciones con señales de ley para verificarlas en su
-  // HTML individual.
-  if (section === 'A') {
-    return isLaw(value) || isLawApprovalAmendmentOrRepeal(value);
-  }
-
-  // C) Todo lo correspondiente a la consejería objetivo pasa a segunda fase.
-  if (section === 'C') {
-    return value.includes(normalize(TARGET_C_MINISTRY));
-  }
-
-  // D) Las dos consejerías objetivo pasan a segunda fase. PRI es una vía
-  // adicional, jamás un requisito para el resto de anuncios de la sección.
+  // En A, C y D se abre la rama completa salvo veto explícito. Esto recupera
+  // anuncios cuyo título del sumario es demasiado corto para clasificarlos.
+  if (section === 'A' || section === 'C') return true;
   if (section === 'D') {
     if (containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return false;
-    if (containsAny(value, TARGET_D_MINISTRIES)) return true;
+    return true;
   }
 
-  // Reglas transversales basadas exclusivamente en el bloque propio del
-  // anuncio, no en el texto completo del sumario.
+  // Fuera de las ramas conocidas solo se abren señales técnicas claras.
   if (containsAny(value, ALWAYS_INCLUDE_TERMS)) return true;
   if (containsAny(value, EXPROPRIATION_TERMS)) return true;
+  if (containsAny(value, LOCAL_TERMS) || containsAny(value, URBAN_DEVELOPMENT_TERMS)) return true;
   if (containsAny(value, CONTRACT_MARKERS) && containsAny(value, CIVIL_ENGINEERING_TERMS)) return true;
   if (containsAny(value, FUNDING_AND_AGREEMENT_TERMS)
       && (containsAny(value, URBAN_DEVELOPMENT_TERMS) || containsAny(value, CIVIL_ENGINEERING_TERMS))) return true;
@@ -364,20 +373,25 @@ function isLawApprovalAmendmentOrRepeal(text) {
   return refersToLaw && action;
 }
 
-function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
-  const value = normalize(`${context} ${text}`);
+function classifyAnnouncement({ text, context, section, structure = {} }) {
+  // Las palabras y organismos se verifican sobre el HTML individual. El texto
+  // del sumario solo ayuda a recuperar la sección cuando el HTML no la declara.
+  const value = normalize(text);
+  const contextValue = normalize(context || '');
+  const organization = structure.organizationNormalized || '';
+  const effectiveSection = structure.section && structure.section !== 'OTHER' ? structure.section : section;
 
   if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return null;
-  if (section === 'B') return null;
+  if (effectiveSection === 'B') return null;
   if (/\bb\)\s*autoridades y personal\b/.test(value) || value.includes('autoridades y personal')) return null;
 
   // Regla prioritaria para III. ADMINISTRACIÓN LOCAL:
   // un anuncio municipal solo puede entrar cuando el propio HTML contiene
   // simultáneamente un encabezado AYUNTAMIENTO DE ... y otro encabezado
   // independiente cuyo texto sea exactamente URBANISMO.
-  const hasTownHallHeading = Boolean(localHeadings.hasTownHallHeading);
-  const hasUrbanismoHeading = Boolean(localHeadings.hasUrbanismoHeading);
-  const isLocalAnnouncement = section === 'LOCAL' || hasTownHallHeading || value.includes('iii. administracion local');
+  const hasTownHallHeading = Boolean(structure.hasTownHallHeading);
+  const hasUrbanismoHeading = Boolean(structure.hasUrbanismoHeading);
+  const isLocalAnnouncement = effectiveSection === 'LOCAL' || hasTownHallHeading || structure.headingText?.includes('iii. administracion local');
 
   if (isLocalAnnouncement) {
     if (!(hasTownHallHeading && hasUrbanismoHeading)) return null;
@@ -392,7 +406,18 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
 
   // En el bloque de anuncios autonómicos se descartan expresamente las
   // consejerías que no forman parte del ámbito técnico definido.
-  if ((section === 'D' || section === 'OTHER') && containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return null;
+  // Veto absoluto por organismo. Se comprueba primero el encabezado propio y
+  // después el texto del anuncio como red de seguridad.
+  if (containsAny(organization, EXCLUDED_ANNOUNCEMENT_MINISTRIES)
+      || containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return null;
+
+  // En D) Anuncios, si el HTML identifica una consejería, solo continúan las
+  // dos consejerías acordadas. Hospitales y organismos de Sanidad quedan fuera.
+  if (effectiveSection === 'D') {
+    if (organization.startsWith('hospital universitario')) return null;
+    if (organization.startsWith('consejeria de ')
+        && !containsAny(organization, TARGET_D_MINISTRIES)) return null;
+  }
 
   const isPolicePersonnel = containsAny(value, POLICE_PERSONNEL_TERMS);
   const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
@@ -404,6 +429,18 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
     && !containsAny(value, EXPROPRIATION_TERMS)
     && !containsAny(value, TERRITORIAL_ENVIRONMENT_TERMS);
   if (isAgricultureOrLivestockOnly) return null;
+
+  // Cualquier anuncio no municipal que trate expresamente materias de
+  // urbanismo acordadas se incluye, aunque el sumario no las anticipase.
+  const directUrbanMatches = [...LOCAL_TERMS, ...URBAN_DEVELOPMENT_TERMS]
+    .filter(term => value.includes(normalize(term)));
+  if (directUrbanMatches.length) {
+    return {
+      score: 106,
+      reason: 'Actuación relacionada con urbanismo o planeamiento',
+      matches: [...new Set(directUrbanMatches)].slice(0, 5)
+    };
+  }
 
   // Regla adicional, no restrictiva: PRI incluye el anuncio cuando aparece,
   // pero su ausencia no excluye el resto de anuncios válidos de la sección D).
@@ -443,7 +480,7 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
     };
   }
 
-  if (section === 'A' && isLawApprovalAmendmentOrRepeal(value)) {
+  if (effectiveSection === 'A' && isLawApprovalAmendmentOrRepeal(value)) {
     const actionMatches = ['aprueba', 'aprobacion', 'modifica', 'modificacion', 'deroga', 'derogacion']
       .filter(term => value.includes(term));
     return {
@@ -453,15 +490,15 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
     };
   }
 
-  if (section === 'A' && isLaw(value)) {
+  if (effectiveSection === 'A' && isLaw(value)) {
     return { score: 95, reason: 'Ley publicada en Disposiciones Generales', matches: ['ley'] };
   }
 
-  if (section === 'C' && value.includes(normalize(TARGET_C_MINISTRY))) {
+  if (effectiveSection === 'C' && (organization.includes(normalize(TARGET_C_MINISTRY)) || value.includes(normalize(TARGET_C_MINISTRY)))) {
     return { score: 85, reason: 'Otras disposiciones de Medio Ambiente, Agricultura e Interior', matches: ['otras disposiciones'] };
   }
 
-  if ((section === 'D' || section === 'OTHER') && containsAny(value, TARGET_D_MINISTRIES)) {
+  if ((effectiveSection === 'D' || effectiveSection === 'OTHER') && (containsAny(organization, TARGET_D_MINISTRIES) || containsAny(value, TARGET_D_MINISTRIES))) {
     const ministry = TARGET_D_MINISTRIES.find(term => value.includes(normalize(term)));
     return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
   }
@@ -613,27 +650,51 @@ function buildAdministrativeSummary({ title, body, municipality, relevance }) {
     : titleSummary.slice(0, 640);
 }
 
-function extractLocalHeadingFlags($) {
-  let hasTownHallHeading = false;
-  let hasUrbanismoHeading = false;
-
-  $('h1,h2,h3,h4,h5,h6,p,div,span,strong,b,td,th').each((_, element) => {
+function extractStructuralMetadata($) {
+  const headings = [];
+  $('h1,h2,h3,h4,h5,h6,p,strong,b,td,th').each((_, element) => {
     const node = $(element).clone();
     node.children().remove();
-    const ownText = normalize(node.text());
-    if (!ownText || ownText.length > 180) return;
-    if (/^ayuntamiento de\s+.+/.test(ownText)) hasTownHallHeading = true;
-    if (ownText === 'urbanismo') hasUrbanismoHeading = true;
+    const ownText = node.text().replace(/\s+/g, ' ').trim();
+    const normalized = normalize(ownText);
+    if (!normalized || normalized.length > 190) return;
+    if (/^ayuntamiento de\s+.+/.test(normalized)
+      || normalized === 'urbanismo'
+      || normalized.includes('administracion local')
+      || /^[abcd]\)\s+/.test(normalized)
+      || normalized.startsWith('consejeria de ')
+      || normalized.startsWith('hospital universitario ')
+      || normalized.startsWith('organismo autonomo ')) {
+      headings.push(ownText);
+    }
   });
 
-  return { hasTownHallHeading, hasUrbanismoHeading };
+  const normalizedHeadings = headings.map(normalize);
+  const organization = headings.find(text => {
+    const value = normalize(text);
+    return value.startsWith('consejeria de ')
+      || value.startsWith('ayuntamiento de ')
+      || value.startsWith('hospital universitario ')
+      || value.startsWith('organismo autonomo ');
+  }) || '';
+
+  const headingText = normalizedHeadings.join(' · ');
+  return {
+    headings,
+    headingText,
+    organization,
+    organizationNormalized: normalize(organization),
+    section: inferSection(headingText),
+    hasTownHallHeading: normalizedHeadings.some(value => /^ayuntamiento de\s+.+/.test(value)),
+    hasUrbanismoHeading: normalizedHeadings.includes('urbanismo')
+  };
 }
 
 async function readAnnouncement(item) {
   let title = item.label;
 
   const html = await fetchText(item.href, {
-    timeoutMs: 6000,
+    timeoutMs: 4500,
     headers: { Accept: 'text/html,application/xhtml+xml' }
   });
   if (!html) return null;
@@ -647,12 +708,12 @@ async function readAnnouncement(item) {
     || $('title').text().trim()
     || title;
 
-  const localHeadings = extractLocalHeadingFlags($);
+  const structure = extractStructuralMetadata($);
   const body = extractUsefulContent($);
   if (!body) return null;
 
   const combined = `${title} ${body}`;
-  const relevance = classifyAnnouncement({ text: combined, context: item.context, section: item.section, localHeadings });
+  const relevance = classifyAnnouncement({ text: combined, context: item.context, section: structure.section === 'OTHER' ? item.section : structure.section, structure });
   if (!relevance) return null;
 
   const municipality = extractMunicipality(`${item.context} ${combined}`) || 'Ámbito autonómico o no identificado';
@@ -784,7 +845,7 @@ export async function searchHistoricalBocm(queryText, from = '', to = '', munici
       const html = await fetchText(item.url, { headers: { Accept: 'text/html,application/xhtml+xml' } });
       if (!html) return item;
       const $ = cheerio.load(html);
-      const localHeadings = extractLocalHeadingFlags($);
+      const structure = extractStructuralMetadata($);
   const body = extractUsefulContent($);
       const title = $('meta[property="og:title"]').attr('content')?.trim()
         || $('main h1').first().text().trim()
@@ -843,7 +904,7 @@ export async function searchBocm(date, municipalityText = '') {
 
   // Fase 2: se abren únicamente los candidatos para verificar reglas, aplicar
   // exclusiones y generar la descripción administrativa.
-  const readResults = await mapWithConcurrency(candidateLinks, 12, readAnnouncement);
+  const readResults = await mapWithConcurrency(candidateLinks, 16, readAnnouncement);
   const results = readResults.filter(Boolean);
 
   const filtered = uniqueBy(results, x => x.url)
