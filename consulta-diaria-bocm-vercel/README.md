@@ -1,3 +1,12 @@
+# Consulta Diaria BOCM · v15
+
+Correcciones de estabilidad:
+
+- Las peticiones fallidas o agotadas ya no derriban toda la consulta.
+- La estimación del número de boletín incluye los sábados y localiza antes la edición correcta.
+- Los candidatos se comprueban en pequeños grupos paralelos para reducir el tiempo de respuesta.
+- Programa Regional de Inversiones es una regla adicional de inclusión, no un requisito para el resto de anuncios de la sección D).
+
 # Consulta Diaria BOCM · v8
 
 Aplicación web desplegable en Vercel para consultar un BOCM por fecha y mostrar publicaciones de interés técnico.
@@ -35,9 +44,3 @@ Aplicación web desplegable en Vercel para consultar un BOCM por fecha y mostrar
 - Se muestra la marca temporal `AAAAAAAA` en la esquina superior derecha para comprobar visualmente el despliegue.
 - En A) Disposiciones Generales se incluyen expresamente las publicaciones que aprueben, modifiquen o deroguen una ley.
 - Se mantienen todas las leyes que ya se incluían en versiones anteriores.
-
-
-## Cambios v12
-
-- En III. Administración Local solo se muestran anuncios cuyo encabezado propio contenga AYUNTAMIENTO DE ... y, en una línea o epígrafe independiente, URBANISMO.
-- Se excluyen epígrafes como Organización y funcionamiento, Personal, Hacienda, Contratación u otros distintos de Urbanismo, aunque el texto de la página contenga palabras urbanísticas.

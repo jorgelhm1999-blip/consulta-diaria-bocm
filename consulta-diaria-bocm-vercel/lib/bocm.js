@@ -11,6 +11,15 @@ const containsAny = (text, terms) => terms.some(term => text.includes(normalize(
 
 const EXCLUDED_ORGANIZATIONS = ['metro de madrid'];
 
+const EXCLUDED_ANNOUNCEMENT_MINISTRIES = [
+  'consejeria de sanidad',
+  'consejeria de educacion',
+  'consejeria de educacion, ciencia y universidades',
+  'consejeria de educacion y juventud',
+  'consejeria de familia, juventud y asuntos sociales',
+  'consejeria de cultura, turismo y deporte'
+];
+
 const LOCAL_TERMS = [
   'urbanismo',
   'estudio de detalle', 'estudios de detalle',
@@ -129,50 +138,73 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.12',
+        'User-Agent': 'ConsultaDiariaBOCM/0.15',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
     });
     if (!response.ok) return null;
     return await response.text();
+  } catch (error) {
+    console.warn(`No se pudo consultar ${url}:`, error?.name || error?.message || error);
+    return null;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function businessDayEstimate(dateString) {
+function publicationDayEstimate(dateString) {
   const date = new Date(`${dateString}T12:00:00Z`);
   const start = new Date(Date.UTC(date.getUTCFullYear(), 0, 1, 12));
   let count = 0;
+
+  // El BOCM numera también las ediciones de los sábados. Excluir sábados,
+  // como hacía la estimación anterior, alejaba mucho el número calculado.
+  // Se excluyen solo los domingos y luego se prueban números próximos para
+  // absorber festivos y días sin edición.
   for (let cursor = new Date(start); cursor <= date; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    const day = cursor.getUTCDay();
-    if (day !== 0 && day !== 6) count += 1;
+    if (cursor.getUTCDay() !== 0) count += 1;
   }
   return Math.max(1, count);
 }
 
 async function locateBulletin(dateString) {
   const compact = dateString.replaceAll('-', '');
-  const estimate = businessDayEstimate(dateString);
+  const estimate = publicationDayEstimate(dateString);
   const candidates = [];
 
-  for (let distance = 0; distance <= 35; distance += 1) {
+  for (let distance = 0; distance <= 18; distance += 1) {
     if (estimate - distance > 0) candidates.push(estimate - distance);
     if (distance && estimate + distance <= 366) candidates.push(estimate + distance);
   }
 
-  for (const number of candidates) {
-    const url = `${BASE}/boletin/bocm-${compact}-${number}`;
-    const html = await fetchText(url);
-    if (!html) continue;
+  // Se prueban pequeños grupos en paralelo. Así una URL lenta o inexistente
+  // no bloquea durante decenas de segundos toda la función de Vercel.
+  for (let i = 0; i < candidates.length; i += 6) {
+    const batch = candidates.slice(i, i + 6);
+    const attempts = await Promise.all(batch.map(async number => {
+      const url = `${BASE}/boletin/bocm-${compact}-${number}`;
+      const html = await fetchText(url);
+      if (!html) return null;
 
-    const $ = cheerio.load(html);
-    const pageText = normalize($.root().text());
-    const [year, , day] = dateString.split('-');
-    if (pageText.includes(String(Number(day))) && pageText.includes(String(Number(year)))) {
-      return { number, url, html };
-    }
+      const $ = cheerio.load(html);
+      const pageText = normalize($.root().text());
+      const [year, month, day] = dateString.split('-');
+      const dateSignals = [
+        `${Number(day)}-${Number(month)}-${year}`,
+        `${day}-${month}-${year}`,
+        `${Number(day)}/${Number(month)}/${year}`,
+        `${day}/${month}/${year}`,
+        compact
+      ].map(normalize);
+
+      return dateSignals.some(signal => pageText.includes(signal))
+        ? { number, url, html }
+        : null;
+    }));
+
+    const found = attempts.find(Boolean);
+    if (found) return found;
   }
 
   return null;
@@ -283,6 +315,29 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
   if (section === 'B') return null;
   if (/\bb\)\s*autoridades y personal\b/.test(value) || value.includes('autoridades y personal')) return null;
 
+  // Regla prioritaria para III. ADMINISTRACIÓN LOCAL:
+  // un anuncio municipal solo puede entrar cuando el propio HTML contiene
+  // simultáneamente un encabezado AYUNTAMIENTO DE ... y otro encabezado
+  // independiente cuyo texto sea exactamente URBANISMO.
+  const hasTownHallHeading = Boolean(localHeadings.hasTownHallHeading);
+  const hasUrbanismoHeading = Boolean(localHeadings.hasUrbanismoHeading);
+  const isLocalAnnouncement = section === 'LOCAL' || hasTownHallHeading || value.includes('iii. administracion local');
+
+  if (isLocalAnnouncement) {
+    if (!(hasTownHallHeading && hasUrbanismoHeading)) return null;
+
+    const localMatches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
+    return {
+      score: 108,
+      reason: 'Anuncio de Ayuntamiento incluido en el apartado Urbanismo',
+      matches: [...new Set(['ayuntamiento', 'urbanismo', ...localMatches])].slice(0, 5)
+    };
+  }
+
+  // En el bloque de anuncios autonómicos se descartan expresamente las
+  // consejerías que no forman parte del ámbito técnico definido.
+  if ((section === 'D' || section === 'OTHER') && containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return null;
+
   const isPolicePersonnel = containsAny(value, POLICE_PERSONNEL_TERMS);
   const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
   if (isPolicePersonnel && !isPoliceZone) return null;
@@ -294,6 +349,8 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
     && !containsAny(value, TERRITORIAL_ENVIRONMENT_TERMS);
   if (isAgricultureOrLivestockOnly) return null;
 
+  // Regla adicional, no restrictiva: PRI incluye el anuncio cuando aparece,
+  // pero su ausencia no excluye el resto de anuncios válidos de la sección D).
   const alwaysIncludeMatches = ALWAYS_INCLUDE_TERMS.filter(term => value.includes(normalize(term)));
   if (alwaysIncludeMatches.length) {
     return {
@@ -352,26 +409,6 @@ function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
     const ministry = TARGET_D_MINISTRIES.find(term => value.includes(normalize(term)));
     return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
   }
-
-  // En Administración Local solo se admiten anuncios cuyo encabezado propio
-  // contenga conjuntamente AYUNTAMIENTO DE ... y URBANISMO. No basta con que
-  // aparezca la palabra urbanismo en el cuerpo, en enlaces vecinos o en el sumario.
-  const hasTownHallHeading = Boolean(localHeadings.hasTownHallHeading);
-  const hasUrbanismoHeading = Boolean(localHeadings.hasUrbanismoHeading);
-  const explicitLocalUrbanismHeading = hasTownHallHeading && hasUrbanismoHeading;
-  const localMatches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
-
-  if (explicitLocalUrbanismHeading) {
-    return {
-      score: 108,
-      reason: 'Anuncio de Ayuntamiento incluido en el apartado Urbanismo',
-      matches: [...new Set(['ayuntamiento', 'urbanismo', ...localMatches])].slice(0, 5)
-    };
-  }
-
-  // Cerrojazo para III. Administración Local: cualquier epígrafe distinto de
-  // URBANISMO (por ejemplo, Organización y funcionamiento) queda excluido.
-  if (section === 'LOCAL' || hasTownHallHeading) return null;
 
   return null;
 }
