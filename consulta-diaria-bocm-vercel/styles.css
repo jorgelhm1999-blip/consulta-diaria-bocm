@@ -49,3 +49,13 @@ h2 { margin: 0; font-size: 1.18rem; line-height: 1.35; }
 
 .version { display: inline-block; vertical-align: top; margin-left: .35rem; padding: .28rem .48rem; border-radius: 999px; background: #eef1f6; color: #68748a; font-size: .72rem; letter-spacing: 0; }
 .summary { white-space: normal; }
+.tabs { display: flex; justify-content: center; gap: 8px; margin: 0 0 16px; }
+.tab { min-height: 42px; padding: 0 18px; background: #e9edf3; color: #4e5b70; }
+.tab.active { background: #8b1e2d; color: white; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.historical-panel { display: grid; grid-template-columns: 1.6fr .8fr .8fr 1.2fr auto; gap: 14px; align-items: end; background: white; padding: 20px; border: 1px solid #dfe4ed; border-radius: 20px; box-shadow: 0 12px 38px rgba(24, 35, 58, .08); }
+.hint { margin: 10px 4px 0; color: #778297; font-size: .88rem; }
+.date-badge { background: #e9f0f7; color: #36536b; }
+@media (max-width: 900px) { .historical-panel { grid-template-columns: 1fr 1fr; } .historical-panel button, .query-field, .municipality-field { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .tabs { flex-direction: column; } .historical-panel { grid-template-columns: 1fr; } }

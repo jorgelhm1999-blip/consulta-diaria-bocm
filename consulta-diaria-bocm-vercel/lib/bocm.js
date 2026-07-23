@@ -100,7 +100,7 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.6',
+        'User-Agent': 'ConsultaDiariaBOCM/0.7',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -180,7 +180,10 @@ async function collectAnnouncementLinks(bulletin) {
   $('a[href]').each((_, el) => {
     const href = absoluteUrl($(el).attr('href'), bulletin.url);
     if (!href || !href.includes('/boletin-completo/')) return;
-    sectionLinks.push({ href, label: $(el).text().trim() });
+    const label = $(el).text().trim();
+    const context = `${label} ${href}`;
+    if (inferSection(context) === 'B') return;
+    sectionLinks.push({ href, label });
   });
 
   const pages = [{ href: bulletin.url, label: $('title').text().trim() }, ...uniqueBy(sectionLinks, x => x.href)];
@@ -192,6 +195,8 @@ async function collectAnnouncementLinks(bulletin) {
     const page = cheerio.load(html);
     const pageTitle = page('h1').first().text().trim() || page('title').text().trim() || pageInfo.label;
     const pageContext = `${pageInfo.label} ${pageTitle} ${pageInfo.href}`;
+    const pageSection = inferSection(pageContext);
+    if (pageSection === 'B') continue;
 
     page('a[href]').each((_, el) => {
       const href = absoluteUrl(page(el).attr('href'), pageInfo.href);
@@ -199,12 +204,16 @@ async function collectAnnouncementLinks(bulletin) {
       if (/\.(pdf|xml|epub|json)(?:$|\?)/i.test(href)) return;
 
       const node = page(el);
-      const nearby = node.closest('article, li, tr, div').text().replace(/\s+/g, ' ').trim().slice(0, 800);
+      const container = node.closest('article, li, tr, section, div');
+      const nearby = container.text().replace(/\s+/g, ' ').trim().slice(0, 1400);
+      const localSection = inferSection(`${pageContext} ${nearby} ${href}`);
+      if (localSection === 'B') return;
+
       announcementLinks.push({
         href,
         label: node.text().trim(),
         context: `${pageContext} ${nearby}`,
-        section: inferSection(pageContext)
+        section: localSection === 'OTHER' ? pageSection : localSection
       });
     });
   }
@@ -234,6 +243,7 @@ function classifyAnnouncement({ text, context, section }) {
 
   if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return null;
   if (section === 'B') return null;
+  if (/\bb\)\s*autoridades y personal\b/.test(value) || value.includes('autoridades y personal')) return null;
 
   const isPolicePersonnel = containsAny(value, POLICE_PERSONNEL_TERMS);
   const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
@@ -468,6 +478,141 @@ async function readAnnouncement(item) {
     matches: relevance.matches,
     section: item.section
   };
+}
+
+
+function parseDateFromCve(value = '') {
+  const match = value.match(/BOCM-(\d{4})(\d{2})(\d{2})-\d+/i);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
+}
+
+function cveFromText(value = '') {
+  return value.match(/BOCM-\d{8}-\d+/i)?.[0]?.toUpperCase() || '';
+}
+
+function htmlUrlFromCve(cve) {
+  const match = cve.match(/BOCM-(\d{4})(\d{2})(\d{2})-(\d+)/i);
+  if (!match) return '';
+  return `${BASE}/boletin/CM_Orden_BOCM/${match[1]}/${match[2]}/${match[3]}/${cve}.html`;
+}
+
+function discoverSearchForm(html, baseUrl) {
+  const $ = cheerio.load(html);
+  let found = null;
+  $('form').each((_, form) => {
+    if (found) return;
+    const node = $(form);
+    const text = normalize(node.text());
+    const inputs = node.find('input, textarea').toArray();
+    const textInput = inputs.find(input => {
+      const el = $(input);
+      const type = (el.attr('type') || 'text').toLowerCase();
+      const name = el.attr('name');
+      return name && ['text', 'search', ''].includes(type) && !/cve|boletin|numero|year|ano/i.test(name);
+    });
+    if (!textInput) return;
+    if (!text.includes('texto a buscar') && !text.includes('busqueda libre') && !text.includes('buscar')) return;
+    const action = absoluteUrl(node.attr('action') || baseUrl, baseUrl);
+    const method = (node.attr('method') || 'GET').toUpperCase();
+    const fields = {};
+    node.find('input[type="hidden"]').each((__, el) => {
+      const name = $(el).attr('name');
+      if (name) fields[name] = $(el).attr('value') || '';
+    });
+    found = { action, method, fieldName: $(textInput).attr('name'), fields };
+  });
+  return found;
+}
+
+function parseHistoricalResults(html, pageUrl, query) {
+  const $ = cheerio.load(html);
+  const items = [];
+  $('a[href]').each((_, el) => {
+    const href = absoluteUrl($(el).attr('href'), pageUrl);
+    const node = $(el);
+    const container = node.closest('article, li, tr, .views-row, .search-result, div');
+    const text = tidyText(container.text());
+    const cve = cveFromText(`${href} ${text}`);
+    if (!cve) return;
+    const url = htmlUrlFromCve(cve) || href;
+    const title = tidyText(node.text()) || tidyText(container.find('h2,h3,h4').first().text()) || cve;
+    const date = parseDateFromCve(cve);
+    const normalized = normalize(text);
+    if (!normalize(query).split(' ').filter(Boolean).some(term => normalized.includes(term))) return;
+    items.push({
+      cve,
+      date,
+      title: title.length > 12 ? title : tidyText(text).slice(0, 300),
+      summary: tidyText(text).replace(title, '').slice(0, 520),
+      municipality: extractMunicipality(text) || 'Ámbito no identificado',
+      url,
+      sourceUrl: href
+    });
+  });
+  return uniqueBy(items, item => item.cve);
+}
+
+async function runOfficialHistoricalSearch(query) {
+  const home = await fetchText(BASE);
+  if (!home) throw new Error('No se pudo acceder al buscador oficial del BOCM.');
+  const form = discoverSearchForm(home, BASE);
+  if (!form) throw new Error('No se ha podido localizar el formulario de búsqueda histórica del BOCM.');
+
+  const params = new URLSearchParams({ ...form.fields, [form.fieldName]: query });
+  let responseHtml = null;
+  let resultUrl = form.action;
+  if (form.method === 'POST') {
+    responseHtml = await fetchText(form.action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html' },
+      body: params.toString()
+    });
+  } else {
+    resultUrl = `${form.action}${form.action.includes('?') ? '&' : '?'}${params}`;
+    responseHtml = await fetchText(resultUrl, { headers: { Accept: 'text/html' } });
+  }
+  if (!responseHtml) throw new Error('El buscador oficial no devolvió resultados.');
+  return { html: responseHtml, url: resultUrl };
+}
+
+export async function searchHistoricalBocm(queryText, from = '', to = '', municipalityText = '') {
+  const query = tidyText(queryText);
+  if (query.length < 2) throw new Error('Introduce al menos dos caracteres.');
+  const official = await runOfficialHistoricalSearch(query);
+  let results = parseHistoricalResults(official.html, official.url, query);
+  const municipality = normalize(municipalityText);
+
+  results = results.filter(item => {
+    if (from && item.date && item.date < from) return false;
+    if (to && item.date && item.date > to) return false;
+    if (municipality && !normalize(`${item.municipality} ${item.title} ${item.summary}`).includes(municipality)) return false;
+    return true;
+  });
+
+  for (let i = 0; i < results.length; i += 6) {
+    const enriched = await Promise.all(results.slice(i, i + 6).map(async item => {
+      const html = await fetchText(item.url, { headers: { Accept: 'text/html,application/xhtml+xml' } });
+      if (!html) return item;
+      const $ = cheerio.load(html);
+      const body = extractUsefulContent($);
+      const title = $('meta[property="og:title"]').attr('content')?.trim()
+        || $('main h1').first().text().trim()
+        || $('article h1').first().text().trim()
+        || item.title;
+      const section = inferSection(`${title} ${body}`);
+      if (section === 'B' || normalize(`${title} ${body}`).includes('autoridades y personal')) return null;
+      const relevance = { matches: [query], reason: 'Coincidencia histórica', score: 70 };
+      return {
+        ...item,
+        title,
+        municipality: extractMunicipality(`${title} ${body}`) || item.municipality,
+        summary: buildAdministrativeSummary({ title, body, municipality: item.municipality, relevance })
+      };
+    }));
+    results.splice(i, enriched.length, ...enriched.filter(Boolean));
+  }
+
+  return { query, results: uniqueBy(results, item => item.cve).slice(0, 60) };
 }
 
 export async function searchBocm(date, municipalityText = '') {
