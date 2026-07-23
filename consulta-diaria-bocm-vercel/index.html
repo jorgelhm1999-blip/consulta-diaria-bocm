@@ -9,51 +9,21 @@
 <body>
   <main class="shell">
     <header>
-      <p class="eyebrow">BOLETÍN OFICIAL DE LA COMUNIDAD DE MADRID</p>
-      <h1>Consulta Diaria BOCM <span class="version">v7</span></h1>
-      <p class="subtitle">Selección diaria y búsqueda histórica de urbanismo, medio ambiente e ingeniería civil.</p>
+      <img class="brand-image" src="assets/cabecera-bocm.png" alt="Consulta Diaria BOCM">
+      <p class="subtitle">Selección diaria de publicaciones útiles sobre urbanismo, medio ambiente territorial e ingeniería civil.</p>
+      <span class="version">v8</span>
     </header>
 
-    <nav class="tabs" aria-label="Tipo de consulta">
-      <button class="tab active" data-tab="daily" type="button">Consulta diaria</button>
-      <button class="tab" data-tab="historical" type="button">Búsqueda histórica</button>
-    </nav>
-
-    <section id="daily-panel" class="tab-panel active">
-      <section class="search-panel" aria-label="Consulta diaria">
-        <div class="field date-field">
-          <label for="date">Fecha del boletín</label>
-          <input id="date" type="date" required>
-        </div>
-        <div class="field municipality-field">
-          <label for="municipality">Municipio <span>opcional</span></label>
-          <input id="municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
-        </div>
-        <button id="search" type="button">Consultar BOCM</button>
-      </section>
-    </section>
-
-    <section id="historical-panel" class="tab-panel">
-      <section class="historical-panel" aria-label="Búsqueda histórica">
-        <div class="field query-field">
-          <label for="historical-query">Palabra o nombre de proyecto</label>
-          <input id="historical-query" type="search" placeholder="Ej.: Valdecabañas, Valgrande…">
-        </div>
-        <div class="field">
-          <label for="historical-from">Desde <span>opcional</span></label>
-          <input id="historical-from" type="date">
-        </div>
-        <div class="field">
-          <label for="historical-to">Hasta <span>opcional</span></label>
-          <input id="historical-to" type="date">
-        </div>
-        <div class="field municipality-field">
-          <label for="historical-municipality">Municipio <span>opcional</span></label>
-          <input id="historical-municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
-        </div>
-        <button id="historical-search" type="button">Buscar en histórico</button>
-      </section>
-      <p class="hint">La búsqueda histórica consulta la base oficial del BOCM desde febrero de 2010 y excluye Autoridades y Personal.</p>
+    <section class="search-panel" aria-label="Consulta diaria">
+      <div class="field date-field">
+        <label for="date">Fecha del boletín</label>
+        <input id="date" type="date" required>
+      </div>
+      <div class="field municipality-field">
+        <label for="municipality">Municipio <span>opcional</span></label>
+        <input id="municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
+      </div>
+      <button id="search" type="button">Consultar BOCM</button>
     </section>
 
     <datalist id="municipality-list"></datalist>

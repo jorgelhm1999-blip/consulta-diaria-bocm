@@ -59,3 +59,19 @@ h2 { margin: 0; font-size: 1.18rem; line-height: 1.35; }
 .date-badge { background: #e9f0f7; color: #36536b; }
 @media (max-width: 900px) { .historical-panel { grid-template-columns: 1fr 1fr; } .historical-panel button, .query-field, .municipality-field { grid-column: 1 / -1; } }
 @media (max-width: 560px) { .tabs { flex-direction: column; } .historical-panel { grid-template-columns: 1fr; } }
+
+
+.brand-image {
+  display: block;
+  width: min(100%, 980px);
+  height: auto;
+  margin: 0 auto;
+  border-radius: 18px;
+  box-shadow: 0 12px 34px rgba(24, 35, 58, .07);
+}
+header { position: relative; }
+header .subtitle { margin-top: 18px; }
+header .version { margin-top: 12px; }
+@media (max-width: 760px) {
+  .brand-image { border-radius: 12px; }
+}

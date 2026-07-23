@@ -79,6 +79,29 @@ const CIVIL_ENGINEERING_TERMS = [
   'restauracion ambiental', 'cauce', 'dominio publico hidraulico'
 ];
 
+
+const AGRICULTURE_LIVESTOCK_EXCLUSION_TERMS = [
+  'actividad ganadera', 'actividades ganaderas', 'interes ganadero',
+  'explotacion ganadera', 'explotaciones ganaderas',
+  'sector ganadero', 'produccion ganadera', 'ganaderia',
+  'bovino', 'ovino', 'caprino', 'porcino', 'avicola',
+  'apicultura', 'bienestar animal', 'sanidad animal',
+  'razas autoctonas', 'pastoreo', 'leche',
+  'actividad agraria', 'actividades agrarias', 'explotacion agraria',
+  'explotaciones agrarias', 'sector agrario', 'produccion agraria',
+  'agricultura', 'cultivos', 'politica agraria comun', 'pac'
+];
+
+const TERRITORIAL_ENVIRONMENT_TERMS = [
+  'evaluacion ambiental', 'impacto ambiental', 'declaracion de impacto ambiental',
+  'autorizacion ambiental', 'restauracion ambiental', 'medio natural',
+  'espacio protegido', 'via pecuaria', 'vias pecuarias',
+  'monte', 'montes', 'cauce', 'dominio publico hidraulico',
+  'residuos', 'suelo contaminado', 'contaminacion',
+  'infraestructura', 'obra', 'proyecto', 'planeamiento',
+  'urbanizacion', 'reurbanizacion', 'expropiacion'
+];
+
 const POLICE_PERSONNEL_TERMS = [
   'plaza de policia', 'plazas de policia', 'policia local',
   'cuerpo de policia', 'agente de policia', 'agentes de policia',
@@ -248,6 +271,13 @@ function classifyAnnouncement({ text, context, section }) {
   const isPolicePersonnel = containsAny(value, POLICE_PERSONNEL_TERMS);
   const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
   if (isPolicePersonnel && !isPoliceZone) return null;
+
+  const isAgricultureOrLivestockOnly = containsAny(value, AGRICULTURE_LIVESTOCK_EXCLUSION_TERMS)
+    && !containsAny(value, URBAN_DEVELOPMENT_TERMS)
+    && !containsAny(value, CIVIL_ENGINEERING_TERMS)
+    && !containsAny(value, EXPROPRIATION_TERMS)
+    && !containsAny(value, TERRITORIAL_ENVIRONMENT_TERMS);
+  if (isAgricultureOrLivestockOnly) return null;
 
   const expropriationMatches = EXPROPRIATION_TERMS.filter(term => value.includes(normalize(term)));
   if (expropriationMatches.length) {
