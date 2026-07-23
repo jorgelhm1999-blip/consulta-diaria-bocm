@@ -132,15 +132,17 @@ const TARGET_D_MINISTRIES = [
 
 async function fetchText(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const { timeoutMs = 8000, ...fetchOptions } = options;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.15',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/149 Safari/537.36 ConsultaDiariaBOCM/0.18',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'es-ES,es;q=0.9',
-        ...(options.headers || {})
+        ...(fetchOptions.headers || {})
       }
     });
     if (!response.ok) return null;
@@ -158,12 +160,16 @@ function publicationDayEstimate(dateString) {
   const start = new Date(Date.UTC(date.getUTCFullYear(), 0, 1, 12));
   let count = 0;
 
-  // El BOCM numera también las ediciones de los sábados. Excluir sábados,
-  // como hacía la estimación anterior, alejaba mucho el número calculado.
-  // Se excluyen solo los domingos y luego se prueban números próximos para
-  // absorber festivos y días sin edición.
+  // El número diario del BOCM no coincide con el número final del CVE.
+  // Por ejemplo, BOCM-20260723-28 es el anuncio 28 del boletín 174.
+  // Como aproximación se cuentan los días de publicación ordinaria:
+  // todos salvo domingos, 1 de enero y 25 de diciembre.
   for (let cursor = new Date(start); cursor <= date; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    if (cursor.getUTCDay() !== 0) count += 1;
+    const month = cursor.getUTCMonth() + 1;
+    const day = cursor.getUTCDate();
+    const isSunday = cursor.getUTCDay() === 0;
+    const isFixedHoliday = (month === 1 && day === 1) || (month === 12 && day === 25);
+    if (!isSunday && !isFixedHoliday) count += 1;
   }
   return Math.max(1, count);
 }
@@ -171,40 +177,29 @@ function publicationDayEstimate(dateString) {
 async function locateBulletin(dateString) {
   const compact = dateString.replaceAll('-', '');
   const estimate = publicationDayEstimate(dateString);
-  const candidates = [];
 
-  for (let distance = 0; distance <= 18; distance += 1) {
-    if (estimate - distance > 0) candidates.push(estimate - distance);
-    if (distance && estimate + distance <= 366) candidates.push(estimate + distance);
-  }
+  // Se prueban muy pocos números, de forma secuencial, para evitar que el
+  // servidor del BOCM limite o ralentice una ráfaga de peticiones paralelas.
+  // El orden prioriza el número calculado y sus vecinos inmediatos.
+  const candidates = [estimate, estimate - 1, estimate + 1, estimate - 2, estimate + 2]
+    .filter(number => number > 0 && number <= 366);
 
-  // Se prueban pequeños grupos en paralelo. Así una URL lenta o inexistente
-  // no bloquea durante decenas de segundos toda la función de Vercel.
-  for (let i = 0; i < candidates.length; i += 6) {
-    const batch = candidates.slice(i, i + 6);
-    const attempts = await Promise.all(batch.map(async number => {
-      const url = `${BASE}/boletin/bocm-${compact}-${number}`;
-      const html = await fetchText(url);
-      if (!html) return null;
+  const isExpectedBulletin = html => {
+    if (!html) return false;
+    const datedAnnouncement = new RegExp(`BOCM[-_/]${compact}[-_/]\\d+`, 'i');
+    if (datedAnnouncement.test(html)) return true;
 
-      const $ = cheerio.load(html);
-      const pageText = normalize($.root().text());
-      const [year, month, day] = dateString.split('-');
-      const dateSignals = [
-        `${Number(day)}-${Number(month)}-${year}`,
-        `${day}-${month}-${year}`,
-        `${Number(day)}/${Number(month)}/${year}`,
-        `${day}/${month}/${year}`,
-        compact
-      ].map(normalize);
+    const $ = cheerio.load(html);
+    const title = normalize($('title').text());
+    const body = normalize($.root().text());
+    return (title.includes('bocm') || body.includes('boletin oficial de la comunidad de madrid'))
+      && (html.includes(compact) || body.includes(dateString.split('-').reverse().join('/')));
+  };
 
-      return dateSignals.some(signal => pageText.includes(signal))
-        ? { number, url, html }
-        : null;
-    }));
-
-    const found = attempts.find(Boolean);
-    if (found) return found;
+  for (const number of candidates) {
+    const url = `${BASE}/boletin/bocm-${compact}-${number}`;
+    const html = await fetchText(url, { timeoutMs: 10000 });
+    if (isExpectedBulletin(html)) return { number, url, html };
   }
 
   return null;
@@ -280,6 +275,48 @@ async function collectAnnouncementLinks(bulletin) {
   }
 
   return uniqueBy(announcementLinks, item => item.href);
+}
+
+
+function isSummaryCandidate(item) {
+  const value = normalize(`${item.context || ''} ${item.label || ''} ${item.href || ''}`);
+  const section = item.section || inferSection(value);
+
+  if (section === 'B' || value.includes('autoridades y personal')) return false;
+  if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return false;
+
+  // Administración Local: solo se abre el anuncio cuando el propio bloque del
+  // sumario contiene a la vez Ayuntamiento y el epígrafe Urbanismo.
+  if (section === 'LOCAL' || value.includes('iii. administracion local') || value.includes('ayuntamiento de')) {
+    return value.includes('ayuntamiento de') && /(?:^|\s)urbanismo(?:\s|$|[.:;-])/.test(value);
+  }
+
+  // A) Disposiciones Generales: leyes nuevas o disposiciones que las aprueban,
+  // modifican o derogan.
+  if (section === 'A') {
+    return isLaw(value) || isLawApprovalAmendmentOrRepeal(value);
+  }
+
+  // C) Otras Disposiciones: consejería definida como de interés.
+  if (section === 'C') {
+    return value.includes(normalize(TARGET_C_MINISTRY));
+  }
+
+  // D) Anuncios: las dos consejerías objetivo entran como candidatas. Las
+  // consejerías expresamente excluidas se descartan antes de abrir su HTML.
+  if (section === 'D' || section === 'OTHER') {
+    if (containsAny(value, EXCLUDED_ANNOUNCEMENT_MINISTRIES)) return false;
+    if (containsAny(value, TARGET_D_MINISTRIES)) return true;
+  }
+
+  // Reglas transversales que pueden aparecer fuera de las ramas anteriores.
+  if (containsAny(value, ALWAYS_INCLUDE_TERMS)) return true;
+  if (containsAny(value, EXPROPRIATION_TERMS)) return true;
+  if (containsAny(value, CONTRACT_MARKERS) && containsAny(value, CIVIL_ENGINEERING_TERMS)) return true;
+  if (containsAny(value, FUNDING_AND_AGREEMENT_TERMS)
+      && (containsAny(value, URBAN_DEVELOPMENT_TERMS) || containsAny(value, CIVIL_ENGINEERING_TERMS))) return true;
+
+  return false;
 }
 
 function extractMunicipality(text) {
@@ -576,7 +613,10 @@ function extractLocalHeadingFlags($) {
 async function readAnnouncement(item) {
   let title = item.label;
 
-  const html = await fetchText(item.href, { headers: { Accept: 'text/html,application/xhtml+xml' } });
+  const html = await fetchText(item.href, {
+    timeoutMs: 6000,
+    headers: { Accept: 'text/html,application/xhtml+xml' }
+  });
   if (!html) return null;
 
   const $ = cheerio.load(html);
@@ -747,18 +787,45 @@ export async function searchHistoricalBocm(queryText, from = '', to = '', munici
   return { query, results: uniqueBy(results, item => item.cve).slice(0, 60) };
 }
 
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const output = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        output[index] = await mapper(items[index], index);
+      } catch (error) {
+        console.warn('Anuncio omitido por error:', error?.message || error);
+        output[index] = null;
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return output;
+}
+
 export async function searchBocm(date, municipalityText = '') {
   const municipality = normalize(municipalityText);
   const bulletin = await locateBulletin(date);
   if (!bulletin) return { date, found: false, results: [] };
 
   const links = await collectAnnouncementLinks(bulletin);
-  const results = [];
 
-  for (let i = 0; i < links.length; i += 8) {
-    const batch = await Promise.all(links.slice(i, i + 8).map(readAnnouncement));
-    results.push(...batch.filter(Boolean));
-  }
+  // Fase 1: el sumario actúa como cribado. Solo se descargan los HTML que ya
+  // muestran señales claras de interés. Esta reducción evita abrir decenas o
+  // cientos de anuncios y mantiene la función dentro del tiempo de Vercel.
+  const candidateLinks = links.filter(isSummaryCandidate);
+
+  // Fase 2: se abren únicamente los candidatos para verificar reglas, aplicar
+  // exclusiones y generar la descripción administrativa.
+  const readResults = await mapWithConcurrency(candidateLinks, 12, readAnnouncement);
+  const results = readResults.filter(Boolean);
 
   const filtered = uniqueBy(results, x => x.url)
     .filter(item => !municipality || normalize(item.municipality).includes(municipality) || normalize(`${item.title} ${item.summary}`).includes(municipality))
@@ -770,6 +837,7 @@ export async function searchBocm(date, municipalityText = '') {
     bulletinNumber: bulletin.number,
     bulletinUrl: bulletin.url,
     scanned: links.length,
+    candidates: candidateLinks.length,
     results: filtered
   };
 }
