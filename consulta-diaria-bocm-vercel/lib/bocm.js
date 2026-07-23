@@ -2,41 +2,74 @@ import * as cheerio from 'cheerio';
 
 const BASE = 'https://www.bocm.es';
 
-const STRONG_TERMS = [
-  'urbanismo', 'planeamiento', 'plan general', 'plan parcial', 'plan especial',
-  'estudio de detalle', 'proyecto de urbanización', 'proyecto urbanización',
-  'reparcelación', 'junta de compensación', 'entidad urbanística', 'expropiación',
-  'infraestructura', 'carretera', 'acceso viario', 'movilidad', 'tráfico',
-  'abastecimiento', 'saneamiento', 'alcantarillado', 'depuración', 'colector',
-  'dominio público hidráulico', 'cauce', 'inundabilidad', 'evaluación ambiental',
-  'impacto ambiental', 'autorización ambiental', 'línea eléctrica', 'subestación',
-  'gasoducto', 'red de riego', 'obra civil', 'proyecto de obras', 'licitación de obras'
-];
-
-const WEAK_TERMS = [
-  'obras', 'licencia', 'información pública', 'aprobación inicial',
-  'aprobación definitiva', 'medio ambiente', 'vivienda', 'transporte',
-  'energía', 'agua', 'suelo', 'red pública', 'convenio urbanístico'
-];
-
-const EXCLUDE_TERMS = [
-  'oferta de empleo', 'proceso selectivo', 'nombramiento', 'bolsa de empleo',
-  'padrón fiscal', 'tributos', 'matrimonio civil', 'fiestas locales'
-];
-
 const normalize = (value = '') => value
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/\s+/g, ' ').trim();
 
+const containsAny = (text, terms) => terms.some(term => text.includes(normalize(term)));
+
+const EXCLUDED_ORGANIZATIONS = ['metro de madrid'];
+
+const LOCAL_TERMS = [
+  'urbanismo',
+  'estudio de detalle', 'estudios de detalle',
+  'plan especial', 'planes especiales',
+  'proyecto de urbanizacion', 'proyectos de urbanizacion',
+  'plan parcial', 'planes parciales',
+  'expropiacion', 'expropiacion forzosa', 'expediente expropiatorio'
+];
+
+const CONTRACT_MARKERS = [
+  'licitacion', 'anuncio de licitacion', 'convocatoria de licitacion',
+  'contrato', 'contratacion', 'procedimiento abierto',
+  'anuncio previo', 'perfil de contratante', 'pliego de clausulas',
+  'presentacion de ofertas', 'fecha limite de presentacion'
+];
+
+const CLOSED_CONTRACT_MARKERS = [
+  'adjudicacion', 'adjudicado', 'formalizacion', 'contrato formalizado',
+  'modificacion del contrato', 'desistimiento', 'renuncia',
+  'declarado desierto', 'resolucion del contrato'
+];
+
+const CIVIL_ENGINEERING_TERMS = [
+  'urbanismo', 'planeamiento urbanistico', 'proyecto urbanistico',
+  'obra civil', 'ingenieria civil', 'infraestructura viaria',
+  'urbanizacion', 'reurbanizacion', 'carretera', 'vial', 'calzada',
+  'pavimentacion', 'firme', 'acera', 'glorieta', 'puente', 'pasarela',
+  'movilidad', 'trafico', 'aparcamiento',
+  'abastecimiento', 'saneamiento', 'alcantarillado', 'colector',
+  'drenaje', 'depuracion', 'red de agua', 'red de riego',
+  'alumbrado publico', 'redes de servicios', 'infraestructura urbana',
+  'proyecto constructivo', 'redaccion de proyecto', 'direccion de obra',
+  'asistencia tecnica', 'coordinacion de seguridad y salud',
+  'control de calidad de obra', 'levantamiento topografico', 'topografia',
+  'estudio geotecnico', 'medio ambiente', 'evaluacion ambiental',
+  'restauracion ambiental', 'cauce', 'dominio publico hidraulico'
+];
+
+const POLICE_PERSONNEL_TERMS = [
+  'plaza de policia', 'plazas de policia', 'policia local',
+  'cuerpo de policia', 'agente de policia', 'agentes de policia',
+  'fuerzas y cuerpos de seguridad', 'personal de policia',
+  'oposicion policia', 'oposiciones policia', 'proceso selectivo policia'
+];
+
+const TARGET_C_MINISTRY = 'consejeria de medio ambiente, agricultura e interior';
+const TARGET_D_MINISTRIES = [
+  'consejeria de vivienda, transportes e infraestructuras',
+  'consejeria de medio ambiente, agricultura e interior'
+];
+
 async function fetchText(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.2',
+        'User-Agent': 'ConsultaDiariaBOCM/0.4',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -99,53 +132,53 @@ function uniqueBy(items, keyFn) {
   });
 }
 
+function inferSection(context = '') {
+  const value = normalize(context);
+  if (value.includes('autoridades y personal') || /(?:^|[\/_-])b(?:[\/_-]|$)/.test(value)) return 'B';
+  if (value.includes('disposiciones generales') || /(?:^|[\/_-])a(?:[\/_-]|$)/.test(value)) return 'A';
+  if (value.includes('otras disposiciones') || /(?:^|[\/_-])c(?:[\/_-]|$)/.test(value)) return 'C';
+  if (value.includes('anuncios') || /(?:^|[\/_-])d(?:[\/_-]|$)/.test(value)) return 'D';
+  if (value.includes('administracion local') || value.includes('ayuntamientos')) return 'LOCAL';
+  return 'OTHER';
+}
+
 async function collectAnnouncementLinks(bulletin) {
   const $ = cheerio.load(bulletin.html);
   const sectionLinks = [];
 
   $('a[href]').each((_, el) => {
     const href = absoluteUrl($(el).attr('href'), bulletin.url);
-    if (href && href.includes('/boletin-completo/')) sectionLinks.push(href);
+    if (!href || !href.includes('/boletin-completo/')) return;
+    sectionLinks.push({ href, label: $(el).text().trim() });
   });
 
-  const pages = [bulletin.url, ...uniqueBy(sectionLinks, x => x)];
+  const pages = [{ href: bulletin.url, label: $('title').text().trim() }, ...uniqueBy(sectionLinks, x => x.href)];
   const announcementLinks = [];
 
-  for (const pageUrl of pages) {
-    const html = pageUrl === bulletin.url ? bulletin.html : await fetchText(pageUrl);
+  for (const pageInfo of pages) {
+    const html = pageInfo.href === bulletin.url ? bulletin.html : await fetchText(pageInfo.href);
     if (!html) continue;
     const page = cheerio.load(html);
+    const pageTitle = page('h1').first().text().trim() || page('title').text().trim() || pageInfo.label;
+    const pageContext = `${pageInfo.label} ${pageTitle} ${pageInfo.href}`;
+
     page('a[href]').each((_, el) => {
-      const href = absoluteUrl(page(el).attr('href'), pageUrl);
-      const label = page(el).text().trim();
-      if (!href) return;
-      if (/BOCM-\d{8}-\d+/i.test(href) || /bocm-\d{8}-\d+/i.test(href)) {
-        announcementLinks.push({ href, label });
-      }
+      const href = absoluteUrl(page(el).attr('href'), pageInfo.href);
+      if (!href || !/BOCM-\d{8}-\d+/i.test(href)) return;
+      if (/\.(pdf|xml|epub|json)(?:$|\?)/i.test(href)) return;
+
+      const node = page(el);
+      const nearby = node.closest('article, li, tr, div').text().replace(/\s+/g, ' ').trim().slice(0, 800);
+      announcementLinks.push({
+        href,
+        label: node.text().trim(),
+        context: `${pageContext} ${nearby}`,
+        section: inferSection(pageContext)
+      });
     });
   }
 
-  return uniqueBy(announcementLinks, item => item.href)
-    .filter(item => !/\.(pdf|xml|epub)$/i.test(item.href));
-}
-
-function inferJsonUrl(url) {
-  const match = url.match(/BOCM-(\d{4})(\d{2})(\d{2})-(\d+)/i);
-  if (!match) return null;
-  const [, year, month, day, number] = match;
-  return `${BASE}/boletin/CM_Orden_BOCM/${year}/${month}/${day}/BOCM-${year}${month}${day}-${number}.json`;
-}
-
-function classify(text) {
-  const value = normalize(text);
-  if (EXCLUDE_TERMS.some(term => value.includes(normalize(term)))) return null;
-  const strong = STRONG_TERMS.filter(term => value.includes(normalize(term)));
-  const weak = WEAK_TERMS.filter(term => value.includes(normalize(term)));
-  if (!strong.length && weak.length < 2) return null;
-  return {
-    score: Math.min(100, strong.length * 24 + weak.length * 8),
-    matches: [...strong, ...weak].slice(0, 6)
-  };
+  return uniqueBy(announcementLinks, item => item.href);
 }
 
 function extractMunicipality(text) {
@@ -161,46 +194,76 @@ function extractMunicipality(text) {
   return '';
 }
 
+function isLaw(text) {
+  return /(^|\s)ley\s+\d|proyecto de ley|ley de la comunidad de madrid/.test(text);
+}
+
+function classifyAnnouncement({ text, context, section }) {
+  const value = normalize(`${context} ${text}`);
+
+  if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return null;
+  if (section === 'B') return null;
+
+  const isPolicePersonnel = containsAny(value, POLICE_PERSONNEL_TERMS);
+  const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
+  if (isPolicePersonnel && !isPoliceZone) return null;
+
+  const isOpenContract = containsAny(value, CONTRACT_MARKERS) && !containsAny(value, CLOSED_CONTRACT_MARKERS);
+  const isCivilContract = isOpenContract && containsAny(value, CIVIL_ENGINEERING_TERMS);
+  if (isCivilContract) {
+    const matches = CIVIL_ENGINEERING_TERMS.filter(term => value.includes(normalize(term))).slice(0, 5);
+    return { score: 100, reason: 'Contrato a licitar de ingeniería civil o urbanismo', matches };
+  }
+
+  if (section === 'A' && isLaw(value)) {
+    return { score: 95, reason: 'Ley publicada en Disposiciones Generales', matches: ['ley'] };
+  }
+
+  if (section === 'C' && value.includes(normalize(TARGET_C_MINISTRY))) {
+    return { score: 85, reason: 'Otras disposiciones de Medio Ambiente, Agricultura e Interior', matches: ['otras disposiciones'] };
+  }
+
+  if (section === 'D' && containsAny(value, TARGET_D_MINISTRIES)) {
+    const ministry = TARGET_D_MINISTRIES.find(term => value.includes(normalize(term)));
+    return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
+  }
+
+  if (section === 'LOCAL') {
+    const matches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
+    if (matches.length) {
+      return { score: 75, reason: 'Urbanismo o expropiación municipal', matches: [...new Set(matches)].slice(0, 5) };
+    }
+  }
+
+  return null;
+}
+
 async function readAnnouncement(item) {
-  const jsonUrl = inferJsonUrl(item.href);
   let title = item.label;
   let body = '';
-  let municipality = '';
 
-  if (jsonUrl) {
-    const raw = await fetchText(jsonUrl, { headers: { Accept: 'application/json,text/plain,*/*' } });
-    if (raw) {
-      try {
-        const data = JSON.parse(raw);
-        title = data.titulo || data.title || data.asunto || title;
-        body = data.texto || data.text || data.contenido || data.body || JSON.stringify(data);
-        municipality = data.municipio || data.localidad || '';
-      } catch {
-        body = raw;
-      }
-    }
-  }
+  const html = await fetchText(item.href, { headers: { Accept: 'text/html,application/xhtml+xml' } });
+  if (!html) return null;
 
-  if (!body) {
-    const html = await fetchText(item.href);
-    if (html) {
-      const $ = cheerio.load(html);
-      title = $('h1').first().text().trim() || $('h2').first().text().trim() || title;
-      body = $('main').text().trim() || $('body').text().trim();
-    }
-  }
+  const $ = cheerio.load(html);
+  title = $('h1').first().text().trim() || $('h2').first().text().trim() || $('title').text().trim() || title;
+  body = $('main').text().trim() || $('article').text().trim() || $('body').text().trim();
+  if (!body) return null;
 
-  municipality ||= extractMunicipality(`${title} ${body}`);
-  const relevance = classify(`${title} ${body}`);
+  const combined = `${title} ${body}`;
+  const relevance = classifyAnnouncement({ text: combined, context: item.context, section: item.section });
   if (!relevance) return null;
 
+  const municipality = extractMunicipality(`${item.context} ${combined}`);
   return {
     title: title || 'Anuncio del BOCM',
     municipality: municipality || 'Ámbito autonómico o no identificado',
     summary: body.replace(/\s+/g, ' ').trim().slice(0, 420),
     url: item.href,
     score: relevance.score,
-    matches: relevance.matches
+    reason: relevance.reason,
+    matches: relevance.matches,
+    section: item.section
   };
 }
 
@@ -219,7 +282,7 @@ export async function searchBocm(date, municipalityText = '') {
 
   const filtered = uniqueBy(results, x => x.url)
     .filter(item => !municipality || normalize(item.municipality).includes(municipality) || normalize(`${item.title} ${item.summary}`).includes(municipality))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'es'));
 
   return {
     date,

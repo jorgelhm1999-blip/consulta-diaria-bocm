@@ -1,5 +1,8 @@
+import { MUNICIPALITIES } from './municipalities.js';
+
 const dateInput = document.querySelector('#date');
 const municipalityInput = document.querySelector('#municipality');
+const municipalityList = document.querySelector('#municipality-list');
 const searchButton = document.querySelector('#search');
 const status = document.querySelector('#status');
 const results = document.querySelector('#results');
@@ -7,21 +10,26 @@ const results = document.querySelector('#results');
 const today = new Date();
 dateInput.value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
 
+municipalityList.innerHTML = MUNICIPALITIES
+  .map(name => `<option value="${name}"></option>`)
+  .join('');
+
 function escapeHtml(value = '') {
-  return value.replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 }
 
 function renderCard(item) {
   const tags = item.matches.map(tag => `<span class="badge">${escapeHtml(tag)}</span>`).join('');
-  const level = item.score >= 55 ? 'Relevancia alta' : 'Posible interés';
+  const level = item.score >= 90 ? 'Prioridad alta' : 'De interés';
   return `
     <article class="card">
       <div class="badges"><span class="badge high">${level}</span>${tags}</div>
       <h2>${escapeHtml(item.title)}</h2>
       <p class="municipality">${escapeHtml(item.municipality)}</p>
+      <p class="reason">${escapeHtml(item.reason || '')}</p>
       <p class="summary">${escapeHtml(item.summary)}${item.summary.length >= 420 ? '…' : ''}</p>
       <div class="actions">
-        <a href="${item.url}" target="_blank" rel="noopener">Abrir anuncio</a>
+        <a href="${item.url}" target="_blank" rel="noopener">Abrir anuncio en HTML</a>
       </div>
     </article>`;
 }
@@ -48,7 +56,7 @@ async function runSearch() {
     status.innerHTML = `<strong>BOCM nº ${data.bulletinNumber}</strong> · ${data.results.length} resultado(s) de interés entre ${data.scanned} anuncios revisados. <a href="${data.bulletinUrl}" target="_blank" rel="noopener">Ver sumario oficial</a>`;
     results.innerHTML = data.results.length
       ? data.results.map(renderCard).join('')
-      : '<div class="empty">No se han detectado anuncios relacionados con urbanismo o ingeniería civil con los filtros actuales.</div>';
+      : '<div class="empty">No se han detectado publicaciones que cumplan los criterios configurados.</div>';
   } catch (error) {
     status.textContent = error instanceof TypeError && error.message.includes('fetch')
       ? 'No se puede conectar con el servicio de consulta. Prueba de nuevo en unos instantes.'

@@ -11,7 +11,7 @@
     <header>
       <p class="eyebrow">BOLETÍN OFICIAL DE LA COMUNIDAD DE MADRID</p>
       <h1>Consulta Diaria BOCM</h1>
-      <p class="subtitle">Urbanismo, infraestructuras e ingeniería civil, sin bucear a pulmón entre PDFs.</p>
+      <p class="subtitle">Selección diaria de leyes, urbanismo, medio ambiente e ingeniería civil.</p>
     </header>
 
     <section class="search-panel" aria-label="Consulta">
@@ -21,7 +21,8 @@
       </div>
       <div class="field municipality-field">
         <label for="municipality">Municipio <span>opcional</span></label>
-        <input id="municipality" type="search" placeholder="Todos los municipios">
+        <input id="municipality" type="search" list="municipality-list" autocomplete="off" placeholder="Todos los municipios">
+        <datalist id="municipality-list"></datalist>
       </div>
       <button id="search" type="button">Consultar BOCM</button>
     </section>
@@ -29,6 +30,6 @@
     <section id="status" class="status" aria-live="polite"></section>
     <section id="results" class="results" aria-label="Resultados"></section>
   </main>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

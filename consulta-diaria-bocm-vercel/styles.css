@@ -42,3 +42,7 @@ h2 { margin: 0; font-size: 1.18rem; line-height: 1.35; }
   .search-panel { grid-template-columns: 1fr; }
   button { width: 100%; }
 }
+
+.municipality-field { position: relative; }
+
+.reason { margin: -0.25rem 0 0.75rem; font-weight: 700; color: #36536b; }
