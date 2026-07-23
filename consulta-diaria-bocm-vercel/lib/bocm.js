@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 const BASE = 'https://www.bocm.es';
 
 const normalize = (value = '') => value
+  .replace(/([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])-\s*\n?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, '$1$2')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -32,10 +33,40 @@ const CLOSED_CONTRACT_MARKERS = [
   'declarado desierto', 'resolucion del contrato'
 ];
 
+const URBAN_DEVELOPMENT_TERMS = [
+  'urbanismo', 'urbanizacion', 'reurbanizacion',
+  'rehabilitacion urbana', 'rehabilitacion edificatoria',
+  'regeneracion urbana', 'renovacion urbana',
+  'entorno residencial de rehabilitacion programada', 'errp',
+  'mejora del entorno fisico', 'espacio publico',
+  'planeamiento', 'gestion urbanistica', 'actuacion urbanistica',
+  'actuaciones urbanas', 'area de rehabilitacion',
+  'proyecto de urbanizacion', 'plan parcial', 'plan especial',
+  'estudio de detalle'
+];
+
+const FUNDING_AND_AGREEMENT_TERMS = [
+  'subvencion', 'concesion directa', 'ayuda', 'ayudas',
+  'convenio', 'adenda', 'programa de ayudas', 'financiacion',
+  'fondos europeos', 'plan de recuperacion, transformacion y resiliencia',
+  'nextgenerationeu'
+];
+
+const EXPROPRIATION_TERMS = [
+  'expropiacion', 'expropiacion forzosa', 'expediente expropiatorio',
+  'procedimiento expropiatorio', 'acta previa a la ocupacion',
+  'actas previas a la ocupacion', 'levantamiento de actas previas',
+  'justiprecio', 'ocupacion urgente', 'necesidad de ocupacion',
+  'relacion de bienes y derechos afectados',
+  'bienes y derechos afectados'
+];
+
 const CIVIL_ENGINEERING_TERMS = [
   'urbanismo', 'planeamiento urbanistico', 'proyecto urbanistico',
   'obra civil', 'ingenieria civil', 'infraestructura viaria',
-  'urbanizacion', 'reurbanizacion', 'carretera', 'vial', 'calzada',
+  'urbanizacion', 'reurbanizacion', 'rehabilitacion urbana',
+  'regeneracion urbana', 'renovacion urbana', 'espacio publico',
+  'expropiacion', 'expediente expropiatorio', 'carretera', 'vial', 'calzada',
   'pavimentacion', 'firme', 'acera', 'glorieta', 'puente', 'pasarela',
   'movilidad', 'trafico', 'aparcamiento',
   'abastecimiento', 'saneamiento', 'alcantarillado', 'colector',
@@ -69,7 +100,7 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.4',
+        'User-Agent': 'ConsultaDiariaBOCM/0.5',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -208,11 +239,31 @@ function classifyAnnouncement({ text, context, section }) {
   const isPoliceZone = value.includes('zona de policia') || value.includes('zonas de policia');
   if (isPolicePersonnel && !isPoliceZone) return null;
 
+  const expropriationMatches = EXPROPRIATION_TERMS.filter(term => value.includes(normalize(term)));
+  if (expropriationMatches.length) {
+    return {
+      score: 105,
+      reason: 'Actuación o procedimiento de expropiación',
+      matches: [...new Set(expropriationMatches)].slice(0, 5)
+    };
+  }
+
   const isOpenContract = containsAny(value, CONTRACT_MARKERS) && !containsAny(value, CLOSED_CONTRACT_MARKERS);
   const isCivilContract = isOpenContract && containsAny(value, CIVIL_ENGINEERING_TERMS);
   if (isCivilContract) {
     const matches = CIVIL_ENGINEERING_TERMS.filter(term => value.includes(normalize(term))).slice(0, 5);
     return { score: 100, reason: 'Contrato a licitar de ingeniería civil o urbanismo', matches };
+  }
+
+  const fundingMatches = FUNDING_AND_AGREEMENT_TERMS.filter(term => value.includes(normalize(term)));
+  const urbanMatches = URBAN_DEVELOPMENT_TERMS.filter(term => value.includes(normalize(term)));
+  const civilMatches = CIVIL_ENGINEERING_TERMS.filter(term => value.includes(normalize(term)));
+  if (fundingMatches.length && (urbanMatches.length || civilMatches.length)) {
+    return {
+      score: 98,
+      reason: 'Subvención, ayuda, convenio o adenda vinculada a urbanismo u obra civil',
+      matches: [...new Set([...fundingMatches, ...urbanMatches, ...civilMatches])].slice(0, 5)
+    };
   }
 
   if (section === 'A' && isLaw(value)) {
@@ -223,7 +274,7 @@ function classifyAnnouncement({ text, context, section }) {
     return { score: 85, reason: 'Otras disposiciones de Medio Ambiente, Agricultura e Interior', matches: ['otras disposiciones'] };
   }
 
-  if (section === 'D' && containsAny(value, TARGET_D_MINISTRIES)) {
+  if ((section === 'D' || section === 'OTHER') && containsAny(value, TARGET_D_MINISTRIES)) {
     const ministry = TARGET_D_MINISTRIES.find(term => value.includes(normalize(term)));
     return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
   }
