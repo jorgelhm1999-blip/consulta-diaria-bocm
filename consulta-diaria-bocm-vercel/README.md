@@ -21,3 +21,10 @@ Aplicación web desplegable en Vercel para consultar un BOCM por fecha y mostrar
 - Se refuerza la detección de Plan Parcial y del resto de materias urbanísticas municipales.
 - En III. Administración Local se incluye siempre un anuncio cuando aparecen conjuntamente un encabezado `AYUNTAMIENTO DE ...` y el epígrafe `URBANISMO`.
 - Esta regla tiene prioridad sobre el filtrado por palabras clave para evitar falsos negativos.
+
+
+## Cambios v10
+
+- La combinación `AYUNTAMIENTO DE ...` + `URBANISMO` se detecta por el contenido del anuncio, incluso cuando el BOCM no conserva la etiqueta `III. Administración Local` en el enlace del sumario.
+- Se incluyen siempre las referencias al Programa Regional de Inversiones.
+- Se mantiene la exclusión de Autoridades y Personal y los filtros temáticos anteriores.

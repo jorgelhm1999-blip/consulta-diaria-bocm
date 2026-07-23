@@ -52,6 +52,12 @@ const FUNDING_AND_AGREEMENT_TERMS = [
   'nextgenerationeu'
 ];
 
+const ALWAYS_INCLUDE_TERMS = [
+  'programa regional de inversiones',
+  'programa regional de inversion',
+  'pri'
+];
+
 const EXPROPRIATION_TERMS = [
   'expropiacion', 'expropiacion forzosa', 'expediente expropiatorio',
   'procedimiento expropiatorio', 'acta previa a la ocupacion',
@@ -123,7 +129,7 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.7',
+        'User-Agent': 'ConsultaDiariaBOCM/0.10',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -279,6 +285,15 @@ function classifyAnnouncement({ text, context, section }) {
     && !containsAny(value, TERRITORIAL_ENVIRONMENT_TERMS);
   if (isAgricultureOrLivestockOnly) return null;
 
+  const alwaysIncludeMatches = ALWAYS_INCLUDE_TERMS.filter(term => value.includes(normalize(term)));
+  if (alwaysIncludeMatches.length) {
+    return {
+      score: 110,
+      reason: 'Programa Regional de Inversiones',
+      matches: [...new Set(alwaysIncludeMatches)].slice(0, 5)
+    };
+  }
+
   const expropriationMatches = EXPROPRIATION_TERMS.filter(term => value.includes(normalize(term)));
   if (expropriationMatches.length) {
     return {
@@ -319,22 +334,29 @@ function classifyAnnouncement({ text, context, section }) {
     return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
   }
 
-  if (section === 'LOCAL') {
-    const hasTownHallHeading = /ayuntamiento de\s+[a-z0-9áéíóúüñ .,'-]{2,}/i.test(`${context} ${text}`);
-    const hasUrbanismoHeading = /(?:^|\s)urbanismo(?:\s|$|[.:;,-])/i.test(`${context} ${text}`);
-    const explicitLocalUrbanismHeading = hasTownHallHeading && hasUrbanismoHeading;
+  // La estructura del BOCM no siempre conserva la etiqueta LOCAL al pasar del
+  // sumario al anuncio individual. Por eso esta regla se aplica por contenido,
+  // aunque inferSection() haya devuelto OTHER o D.
+  const rawCombined = `${context} ${text}`;
+  const hasTownHallHeading = /ayuntamiento\s+de\s+[a-z0-9áéíóúüñ .,'()\/-]{2,}/i.test(rawCombined);
+  const hasUrbanismoHeading = /(?:^|[\s>:\-])urbanismo(?:[\s<.:;,\-]|$)/i.test(rawCombined);
+  const explicitLocalUrbanismHeading = hasTownHallHeading && hasUrbanismoHeading;
+  const localMatches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
 
-    const matches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
-    if (explicitLocalUrbanismHeading) {
-      return {
-        score: 92,
-        reason: 'Anuncio municipal incluido en el apartado Urbanismo',
-        matches: [...new Set(['urbanismo', ...matches])].slice(0, 5)
-      };
-    }
-    if (matches.length) {
-      return { score: 75, reason: 'Urbanismo o expropiación municipal', matches: [...new Set(matches)].slice(0, 5) };
-    }
+  if (explicitLocalUrbanismHeading) {
+    return {
+      score: 108,
+      reason: 'Anuncio de Ayuntamiento incluido en el apartado Urbanismo',
+      matches: [...new Set(['ayuntamiento', 'urbanismo', ...localMatches])].slice(0, 5)
+    };
+  }
+
+  if (section === 'LOCAL' && localMatches.length) {
+    return {
+      score: 75,
+      reason: 'Urbanismo o expropiación municipal',
+      matches: [...new Set(localMatches)].slice(0, 5)
+    };
   }
 
   return null;
