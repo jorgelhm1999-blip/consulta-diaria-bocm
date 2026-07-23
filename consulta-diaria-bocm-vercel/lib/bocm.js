@@ -320,7 +320,18 @@ function classifyAnnouncement({ text, context, section }) {
   }
 
   if (section === 'LOCAL') {
+    const hasTownHallHeading = /ayuntamiento de\s+[a-z0-9áéíóúüñ .,'-]{2,}/i.test(`${context} ${text}`);
+    const hasUrbanismoHeading = /(?:^|\s)urbanismo(?:\s|$|[.:;,-])/i.test(`${context} ${text}`);
+    const explicitLocalUrbanismHeading = hasTownHallHeading && hasUrbanismoHeading;
+
     const matches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
+    if (explicitLocalUrbanismHeading) {
+      return {
+        score: 92,
+        reason: 'Anuncio municipal incluido en el apartado Urbanismo',
+        matches: [...new Set(['urbanismo', ...matches])].slice(0, 5)
+      };
+    }
     if (matches.length) {
       return { score: 75, reason: 'Urbanismo o expropiación municipal', matches: [...new Set(matches)].slice(0, 5) };
     }

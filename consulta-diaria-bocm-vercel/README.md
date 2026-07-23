@@ -15,3 +15,9 @@ Aplicación web desplegable en Vercel para consultar un BOCM por fecha y mostrar
 - `assets/cabecera-bocm.png`: cabecera gráfica.
 - `api/search.js`: función de consulta diaria.
 - `lib/bocm.js`: lectura y clasificación de anuncios.
+
+
+## Cambios v9
+- Se refuerza la detección de Plan Parcial y del resto de materias urbanísticas municipales.
+- En III. Administración Local se incluye siempre un anuncio cuando aparecen conjuntamente un encabezado `AYUNTAMIENTO DE ...` y el epígrafe `URBANISMO`.
+- Esta regla tiene prioridad sobre el filtrado por palabras clave para evitar falsos negativos.
