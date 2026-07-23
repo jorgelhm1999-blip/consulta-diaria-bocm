@@ -129,7 +129,7 @@ async function fetchText(url, options = {}) {
       ...options,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'ConsultaDiariaBOCM/0.10',
+        'User-Agent': 'ConsultaDiariaBOCM/0.12',
         'Accept-Language': 'es-ES,es;q=0.9',
         ...(options.headers || {})
       }
@@ -267,7 +267,16 @@ function isLaw(text) {
   return /(^|\s)ley\s+\d|proyecto de ley|ley de la comunidad de madrid/.test(text);
 }
 
-function classifyAnnouncement({ text, context, section }) {
+function isLawApprovalAmendmentOrRepeal(text) {
+  const value = normalize(text);
+  const refersToLaw = /(?:^|\s)ley(?:es)?(?:\s+\d|\s+de|\s+por|\s*,|\s*$)/.test(value)
+    || value.includes('texto refundido de la ley')
+    || value.includes('norma con rango de ley');
+  const action = /\b(?:aprueba|aprobar|aprobacion|aprobado|modifica|modificar|modificacion|modificado|deroga|derogar|derogacion|derogado)\b/.test(value);
+  return refersToLaw && action;
+}
+
+function classifyAnnouncement({ text, context, section, localHeadings = {} }) {
   const value = normalize(`${context} ${text}`);
 
   if (containsAny(value, EXCLUDED_ORGANIZATIONS)) return null;
@@ -321,6 +330,16 @@ function classifyAnnouncement({ text, context, section }) {
     };
   }
 
+  if (section === 'A' && isLawApprovalAmendmentOrRepeal(value)) {
+    const actionMatches = ['aprueba', 'aprobacion', 'modifica', 'modificacion', 'deroga', 'derogacion']
+      .filter(term => value.includes(term));
+    return {
+      score: 102,
+      reason: 'Aprobación, modificación o derogación de una ley en Disposiciones Generales',
+      matches: [...new Set(['ley', ...actionMatches])].slice(0, 5)
+    };
+  }
+
   if (section === 'A' && isLaw(value)) {
     return { score: 95, reason: 'Ley publicada en Disposiciones Generales', matches: ['ley'] };
   }
@@ -334,12 +353,11 @@ function classifyAnnouncement({ text, context, section }) {
     return { score: 80, reason: 'Anuncio de consejería de interés', matches: [ministry || 'anuncio'] };
   }
 
-  // La estructura del BOCM no siempre conserva la etiqueta LOCAL al pasar del
-  // sumario al anuncio individual. Por eso esta regla se aplica por contenido,
-  // aunque inferSection() haya devuelto OTHER o D.
-  const rawCombined = `${context} ${text}`;
-  const hasTownHallHeading = /ayuntamiento\s+de\s+[a-z0-9áéíóúüñ .,'()\/-]{2,}/i.test(rawCombined);
-  const hasUrbanismoHeading = /(?:^|[\s>:\-])urbanismo(?:[\s<.:;,\-]|$)/i.test(rawCombined);
+  // En Administración Local solo se admiten anuncios cuyo encabezado propio
+  // contenga conjuntamente AYUNTAMIENTO DE ... y URBANISMO. No basta con que
+  // aparezca la palabra urbanismo en el cuerpo, en enlaces vecinos o en el sumario.
+  const hasTownHallHeading = Boolean(localHeadings.hasTownHallHeading);
+  const hasUrbanismoHeading = Boolean(localHeadings.hasUrbanismoHeading);
   const explicitLocalUrbanismHeading = hasTownHallHeading && hasUrbanismoHeading;
   const localMatches = LOCAL_TERMS.filter(term => value.includes(normalize(term)));
 
@@ -351,13 +369,9 @@ function classifyAnnouncement({ text, context, section }) {
     };
   }
 
-  if (section === 'LOCAL' && localMatches.length) {
-    return {
-      score: 75,
-      reason: 'Urbanismo o expropiación municipal',
-      matches: [...new Set(localMatches)].slice(0, 5)
-    };
-  }
+  // Cerrojazo para III. Administración Local: cualquier epígrafe distinto de
+  // URBANISMO (por ejemplo, Organización y funcionamiento) queda excluido.
+  if (section === 'LOCAL' || hasTownHallHeading) return null;
 
   return null;
 }
@@ -506,6 +520,22 @@ function buildAdministrativeSummary({ title, body, municipality, relevance }) {
     : titleSummary.slice(0, 640);
 }
 
+function extractLocalHeadingFlags($) {
+  let hasTownHallHeading = false;
+  let hasUrbanismoHeading = false;
+
+  $('h1,h2,h3,h4,h5,h6,p,div,span,strong,b,td,th').each((_, element) => {
+    const node = $(element).clone();
+    node.children().remove();
+    const ownText = normalize(node.text());
+    if (!ownText || ownText.length > 180) return;
+    if (/^ayuntamiento de\s+.+/.test(ownText)) hasTownHallHeading = true;
+    if (ownText === 'urbanismo') hasUrbanismoHeading = true;
+  });
+
+  return { hasTownHallHeading, hasUrbanismoHeading };
+}
+
 async function readAnnouncement(item) {
   let title = item.label;
 
@@ -521,11 +551,12 @@ async function readAnnouncement(item) {
     || $('title').text().trim()
     || title;
 
+  const localHeadings = extractLocalHeadingFlags($);
   const body = extractUsefulContent($);
   if (!body) return null;
 
   const combined = `${title} ${body}`;
-  const relevance = classifyAnnouncement({ text: combined, context: item.context, section: item.section });
+  const relevance = classifyAnnouncement({ text: combined, context: item.context, section: item.section, localHeadings });
   if (!relevance) return null;
 
   const municipality = extractMunicipality(`${item.context} ${combined}`) || 'Ámbito autonómico o no identificado';
@@ -657,7 +688,8 @@ export async function searchHistoricalBocm(queryText, from = '', to = '', munici
       const html = await fetchText(item.url, { headers: { Accept: 'text/html,application/xhtml+xml' } });
       if (!html) return item;
       const $ = cheerio.load(html);
-      const body = extractUsefulContent($);
+      const localHeadings = extractLocalHeadingFlags($);
+  const body = extractUsefulContent($);
       const title = $('meta[property="og:title"]').attr('content')?.trim()
         || $('main h1').first().text().trim()
         || $('article h1').first().text().trim()

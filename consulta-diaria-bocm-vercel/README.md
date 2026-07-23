@@ -23,8 +23,21 @@ Aplicación web desplegable en Vercel para consultar un BOCM por fecha y mostrar
 - Esta regla tiene prioridad sobre el filtrado por palabras clave para evitar falsos negativos.
 
 
-## Cambios v10
+## Cambios v11
 
 - La combinación `AYUNTAMIENTO DE ...` + `URBANISMO` se detecta por el contenido del anuncio, incluso cuando el BOCM no conserva la etiqueta `III. Administración Local` en el enlace del sumario.
 - Se incluyen siempre las referencias al Programa Regional de Inversiones.
 - Se mantiene la exclusión de Autoridades y Personal y los filtros temáticos anteriores.
+
+
+## Cambios v11
+
+- Se muestra la marca temporal `AAAAAAAA` en la esquina superior derecha para comprobar visualmente el despliegue.
+- En A) Disposiciones Generales se incluyen expresamente las publicaciones que aprueben, modifiquen o deroguen una ley.
+- Se mantienen todas las leyes que ya se incluían en versiones anteriores.
+
+
+## Cambios v12
+
+- En III. Administración Local solo se muestran anuncios cuyo encabezado propio contenga AYUNTAMIENTO DE ... y, en una línea o epígrafe independiente, URBANISMO.
+- Se excluyen epígrafes como Organización y funcionamiento, Personal, Hacienda, Contratación u otros distintos de Urbanismo, aunque el texto de la página contenga palabras urbanísticas.

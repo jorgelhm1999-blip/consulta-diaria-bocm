@@ -75,3 +75,21 @@ header .version { margin-top: 12px; }
 @media (max-width: 760px) {
   .brand-image { border-radius: 12px; }
 }
+
+.test-marker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  padding: .42rem .62rem;
+  border-radius: 9px;
+  background: #8b1e2d;
+  color: #fff;
+  font-size: .78rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  box-shadow: 0 6px 18px rgba(139, 30, 45, .18);
+}
+@media (max-width: 760px) {
+  .test-marker { position: static; display: table; margin: 0 0 10px auto; }
+}
