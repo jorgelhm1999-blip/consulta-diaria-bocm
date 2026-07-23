@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consulta Diaria BOCM</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">BOLETÍN OFICIAL DE LA COMUNIDAD DE MADRID</p>
+      <h1>Consulta Diaria BOCM</h1>
+      <p class="subtitle">Urbanismo, infraestructuras e ingeniería civil, sin bucear a pulmón entre PDFs.</p>
+    </header>
+
+    <section class="search-panel" aria-label="Consulta">
+      <div class="field date-field">
+        <label for="date">Fecha del boletín</label>
+        <input id="date" type="date" required>
+      </div>
+      <div class="field municipality-field">
+        <label for="municipality">Municipio <span>opcional</span></label>
+        <input id="municipality" type="search" placeholder="Todos los municipios">
+      </div>
+      <button id="search" type="button">Consultar BOCM</button>
+    </section>
+
+    <section id="status" class="status" aria-live="polite"></section>
+    <section id="results" class="results" aria-label="Resultados"></section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
